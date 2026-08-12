@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 
 # Raw flyers are large binaries; keep them locally but out of git.
 data/raw/*.pdf
