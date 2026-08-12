@@ -1,0 +1,17 @@
+README.md
+pyproject.toml
+src/lidl_flyer_tracker.egg-info/PKG-INFO
+src/lidl_flyer_tracker.egg-info/SOURCES.txt
+src/lidl_flyer_tracker.egg-info/dependency_links.txt
+src/lidl_flyer_tracker.egg-info/requires.txt
+src/lidl_flyer_tracker.egg-info/top_level.txt
+src/lidl_tracker/__init__.py
+src/lidl_tracker/acquisition.py
+src/lidl_tracker/cards.py
+src/lidl_tracker/cli_acquire.py
+src/lidl_tracker/cli_extract.py
+src/lidl_tracker/cli_inspect.py
+src/lidl_tracker/parsers.py
+src/lidl_tracker/pdf_extract.py
+tests/test_cards.py
+tests/test_parsers.py

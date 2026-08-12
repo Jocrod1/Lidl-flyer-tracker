@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Raw flyers are large binaries; keep them locally but out of git.
+data/raw/*.pdf
+data/out/
+data/recon/
+data/cache/
+data/config/
+data/watch.log
+
+# Keep the notification state tracked so GitHub Actions can persist it
+# across runs (ephemeral runners lose anything not committed).
+data/state/*
+!data/state/watch_state.json

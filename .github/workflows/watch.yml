@@ -1,0 +1,45 @@
+name: Lidl Flyer Watch
+
+on:
+  schedule:
+    # Sundays 08:00 UTC (~09:00-10:00 in Spain depending on DST).
+    # GitHub may delay scheduled runs slightly under load; that is fine here.
+    - cron: "0 8 * * 0"
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write   # needed to commit back the updated notification state
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: pip install -e .
+
+      - name: Run product watch
+        env:
+          LIDL_SMTP_HOST: ${{ secrets.LIDL_SMTP_HOST }}
+          LIDL_SMTP_PORT: ${{ secrets.LIDL_SMTP_PORT }}
+          LIDL_SMTP_USER: ${{ secrets.LIDL_SMTP_USER }}
+          LIDL_SMTP_PASSWORD: ${{ secrets.LIDL_SMTP_PASSWORD }}
+          LIDL_SMTP_FROM: ${{ secrets.LIDL_SMTP_FROM }}
+          LIDL_SMTP_USE_TLS: "1"
+        run: |
+          python -m lidl_tracker.cli_watch \
+            --query "queso en salmuera" \
+            --to "${{ secrets.LIDL_WATCH_TO }}"
+
+      - name: Persist notification state
+        run: |
+          git config user.name "lidl-flyer-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/state/watch_state.json
+          git diff --cached --quiet || git commit -m "chore: update watch state [skip ci]"
+          git push
