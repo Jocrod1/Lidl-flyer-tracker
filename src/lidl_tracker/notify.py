@@ -37,7 +37,7 @@ class SmtpConfig:
         user = os.environ.get("LIDL_SMTP_USER")
         return cls(
             host=host,
-            port=int(os.environ.get("LIDL_SMTP_PORT", "587")),
+            port=int(os.environ.get("LIDL_SMTP_PORT") or "587"),
             user=user,
             password=os.environ.get("LIDL_SMTP_PASSWORD"),
             from_addr=os.environ.get("LIDL_SMTP_FROM", user),
