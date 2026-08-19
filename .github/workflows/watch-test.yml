@@ -1,0 +1,40 @@
+name: Test Lidl Flyer Watch
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package and test dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: python -m pytest
+
+      - name: Run watch without repository state
+        env:
+          LIDL_WATCH_RAW_DIR: ${{ runner.temp }}/lidl-watch/raw
+          LIDL_WATCH_CACHE_DIR: ${{ runner.temp }}/lidl-watch/cache
+          LIDL_WATCH_STATE_PATH: ${{ runner.temp }}/lidl-watch/watch_state.json
+        run: |
+          python -m lidl_tracker.cli_watch \
+            --query "queso en salmuera" \
+            --to "ci@example.invalid"
+
+      - name: Ensure the watch left no repository changes
+        shell: bash
+        run: test -z "$(git status --porcelain)"

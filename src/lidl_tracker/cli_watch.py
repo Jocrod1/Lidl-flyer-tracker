@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,9 +32,11 @@ from .pdf_extract import extract_all
 from .search import search_cards
 
 ROOT = Path(__file__).resolve().parents[2]
-RAW_DIR = ROOT / "data" / "raw"
-CACHE_DIR = ROOT / "data" / "cache"
-STATE_PATH = ROOT / "data" / "state" / "watch_state.json"
+RAW_DIR = Path(os.environ.get("LIDL_WATCH_RAW_DIR", ROOT / "data" / "raw"))
+CACHE_DIR = Path(os.environ.get("LIDL_WATCH_CACHE_DIR", ROOT / "data" / "cache"))
+STATE_PATH = Path(
+    os.environ.get("LIDL_WATCH_STATE_PATH", ROOT / "data" / "state" / "watch_state.json")
+)
 
 
 def load_state() -> dict[str, Any]:
