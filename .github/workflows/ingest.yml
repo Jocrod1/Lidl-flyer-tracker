@@ -1,0 +1,30 @@
+name: Lidl Flyer Ingest
+
+on:
+  schedule:
+    # Sundays 07:30 UTC — runs before the watch workflow (08:00).
+    - cron: "30 7 * * 0"
+  workflow_dispatch: {}
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: pip install -e .
+
+      - name: Run flyer ingestion
+        env:
+          DATABASE_URL:          ${{ secrets.DATABASE_URL }}
+          R2_ENDPOINT_URL:       ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID:      ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY:  ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME:        ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          python -m lidl_tracker.cli_ingest --migrate
