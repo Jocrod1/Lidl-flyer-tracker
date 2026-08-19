@@ -133,6 +133,12 @@ class LidlLeafletClient:
         resp.raise_for_status()
         return resp.json()
 
+    def fetch_flyer_meta(self, slug: str) -> FlyerMeta:
+        """Fetch one flyer directly by slug and convert it to ``FlyerMeta``."""
+        flyer_doc = self.fetch_flyer(slug)
+        raw = flyer_doc.get("flyer") or flyer_doc
+        return _flyer_meta_from_raw(raw, discovered_at=_now())
+
     # -- discovery -----------------------------------------------------
 
     def discover(self) -> list[FlyerMeta]:
@@ -146,26 +152,11 @@ class LidlLeafletClient:
             for subcategory in category.get("subcategories") or []:
                 subcategory_name = subcategory.get("name") or ""
                 for raw in subcategory.get("flyers") or []:
-                    pdf_url = raw.get("hiResPdfUrl") or raw.get("pdfUrl") or ""
-                    if not pdf_url:
-                        continue
-                    flyer_url = raw.get("flyerUrlAbsolute") or ""
                     flyers.append(
-                        FlyerMeta(
-                            id=raw.get("id") or "",
-                            slug=_slug_from_url(flyer_url),
-                            name=raw.get("name") or "",
-                            title=raw.get("title") or "",
-                            category=category_name,
-                            subcategory=subcategory_name,
-                            pdf_url=pdf_url,
-                            flyer_url=flyer_url,
-                            start_date=raw.get("startDate"),
-                            end_date=raw.get("endDate"),
-                            offer_start_date=raw.get("offerStartDate"),
-                            offer_end_date=raw.get("offerEndDate"),
-                            status=raw.get("status") or "",
-                            file_size=raw.get("hiResFileSize") or raw.get("fileSize"),
+                        _flyer_meta_from_raw(
+                            raw,
+                            category_name=category_name,
+                            subcategory_name=subcategory_name,
                             discovered_at=discovered_at,
                         )
                     )
@@ -222,3 +213,31 @@ def iter_flyer_page_keywords(flyer_doc: dict[str, Any]) -> Iterator[tuple[int, s
     """
     for page in (flyer_doc.get("flyer") or {}).get("pages") or []:
         yield page.get("number", 0), page.get("keyWords") or ""
+
+
+def _flyer_meta_from_raw(
+    raw: dict[str, Any],
+    *,
+    category_name: str = "",
+    subcategory_name: str = "",
+    discovered_at: str,
+) -> FlyerMeta:
+    pdf_url = raw.get("hiResPdfUrl") or raw.get("pdfUrl") or ""
+    flyer_url = raw.get("flyerUrlAbsolute") or raw.get("regionAliasAbsoluteUrl") or ""
+    return FlyerMeta(
+        id=raw.get("id") or "",
+        slug=_slug_from_url(flyer_url),
+        name=raw.get("name") or "",
+        title=raw.get("title") or "",
+        category=category_name or raw.get("category") or "",
+        subcategory=subcategory_name or raw.get("subcategory") or "",
+        pdf_url=pdf_url,
+        flyer_url=flyer_url,
+        start_date=raw.get("startDate"),
+        end_date=raw.get("endDate"),
+        offer_start_date=raw.get("offerStartDate"),
+        offer_end_date=raw.get("offerEndDate"),
+        status=raw.get("status") or "",
+        file_size=raw.get("hiResFileSize") or raw.get("fileSize"),
+        discovered_at=discovered_at,
+    )

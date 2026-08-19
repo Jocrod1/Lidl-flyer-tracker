@@ -19,6 +19,10 @@ python -m venv .venv
 # Milestone 1 — discover flyers and download PDFs (idempotent)
 python -m lidl_tracker.cli_acquire --list
 python -m lidl_tracker.cli_acquire --download-all
+python -m lidl_tracker.cli_ingest --slug folleto-alimentacion-17-8-17-8-26-23-8-26-a07bd0
+python -m lidl_tracker.cli_ingest --slug folleto-alimentacion-17-8-17-8-26-23-8-26-a07bd0,folleto-bazar-17-8-17-8-26-23-8-26-e0c443
+# GitHub Actions: run the "Lidl Flyer Ingest" workflow manually and enter
+# one slug, or comma-separated slugs, in its optional "slug" input.
 
 # Milestone 2 — inspect PDF structure
 python -m lidl_tracker.cli_inspect data/raw/<flyer>.pdf --summary
@@ -35,12 +39,12 @@ pytest
 
 ## Results on real flyers (2026-08-12)
 
-| flyer | pages | cards | ok | partial | failed | name | price | quantity | unit price |
-|---|---|---|---|---|---|---|---|---|---|
-| ALIMENTACIÓN 10/8 | 67 | 245 | 243 | 2 | 0 | 100% | 100% | 95.5% | 88.6% |
-| ALIMENTACIÓN 17/8 | 51 | 186 | 182 | 4 | 0 | 100% | 100% | 93.5% | 89.8% |
-| BAZAR 10/8 | 23 | 69 | 69 | 0 | 0 | 100% | 100% | 11.6%* | 0%* |
-| BAZAR 17/8 | 31 | 135 | 135 | 0 | 0 | 100% | 100% | 5.9%* | 1.5%* |
+| flyer             | pages | cards | ok  | partial | failed | name | price | quantity | unit price |
+| ----------------- | ----- | ----- | --- | ------- | ------ | ---- | ----- | -------- | ---------- |
+| ALIMENTACIÓN 10/8 | 67    | 245   | 243 | 2       | 0      | 100% | 100%  | 95.5%    | 88.6%      |
+| ALIMENTACIÓN 17/8 | 51    | 186   | 182 | 4       | 0      | 100% | 100%  | 93.5%    | 89.8%      |
+| BAZAR 10/8        | 23    | 69    | 69  | 0       | 0      | 100% | 100%  | 11.6%\*  | 0%\*       |
+| BAZAR 17/8        | 31    | 135   | 135 | 0       | 0      | 100% | 100%  | 5.9%\*   | 1.5%\*     |
 
 \* Non-food products genuinely have no weight or unit price.
 

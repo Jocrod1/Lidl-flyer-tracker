@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from lidl_tracker.acquisition import FlyerMeta
-from lidl_tracker.ingest import ingest_flyer, IngestionResult
+from lidl_tracker.ingest import ingest_flyer, IngestionResult, run_ingestion
 from lidl_tracker.models.flyer import FlyerRecord, FlyerStatus
 from lidl_tracker.storage.r2 import sha256_bytes, object_key_for_hash
 
@@ -226,3 +226,47 @@ class TestFailureHandling:
         assert len(upload_calls) == 2
         # Both calls used the same deterministic key
         assert upload_calls[0] == upload_calls[1]
+
+
+class TestSlugIngestion:
+    def test_requested_slugs_are_fetched_directly(self):
+        requested = ["folleto-b", "folleto-a"]
+        seen: list[str] = []
+
+        class FakeClient:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def discover(self):  # pragma: no cover - should never be called
+                raise AssertionError("discover() should not be used for slug ingestion")
+
+            def fetch_flyer_meta(self, slug: str) -> FlyerMeta:
+                seen.append(slug)
+                return _make_flyer(
+                    id=slug,
+                    slug=slug,
+                    name=slug,
+                    pdf_url=f"https://example.com/{slug}.pdf",
+                    flyer_url=f"https://www.lidl.es/l/folletos/{slug}/ar/0",
+                )
+
+        def fake_ingest(flyer, client, now=None):
+            return IngestionResult(
+                flyer_meta=flyer,
+                status=FlyerStatus.STORED,
+                skipped=False,
+                storage_key=f"key-{flyer.slug}",
+                content_hash=f"hash-{flyer.slug}",
+            )
+
+        with (
+            patch("lidl_tracker.ingest.LidlLeafletClient", return_value=FakeClient()),
+            patch("lidl_tracker.ingest.ingest_flyer", side_effect=fake_ingest),
+        ):
+            results = run_ingestion(requested)
+
+        assert seen == requested
+        assert [r.flyer_meta.slug for r in results] == requested

@@ -4,7 +4,13 @@ on:
   schedule:
     # Sundays 07:30 UTC — runs before the watch workflow (08:00).
     - cron: "30 7 * * 0"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: "Flyer slug(s), comma-separated; leave blank to discover current flyers"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   ingest:
@@ -26,5 +32,10 @@ jobs:
           R2_ACCESS_KEY_ID:      ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY:  ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET_NAME:        ${{ secrets.R2_BUCKET_NAME }}
+          INGEST_SLUG:           ${{ inputs.slug }}
         run: |
-          python -m lidl_tracker.cli_ingest --migrate
+          if [ -n "$INGEST_SLUG" ]; then
+            python -m lidl_tracker.cli_ingest --migrate --slug "$INGEST_SLUG"
+          else
+            python -m lidl_tracker.cli_ingest --migrate
+          fi

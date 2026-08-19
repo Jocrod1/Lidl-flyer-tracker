@@ -10,8 +10,8 @@ Required environment variables:
     R2_BUCKET_NAME
 
 Optional:
-    --migrate   apply DB migrations before running (idempotent)
-    --dry-run   discover flyers but skip upload and DB writes
+    --migrate        apply DB migrations before running (idempotent)
+    --slug/--slugs    ingest one or more flyer slugs, comma-separated
 """
 
 from __future__ import annotations
@@ -39,6 +39,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="run DB migrations (CREATE TABLE IF NOT EXISTS) before ingesting",
     )
+    parser.add_argument(
+        "--slug",
+        "--slugs",
+        dest="slugs",
+        help="comma-separated flyer slug(s) to ingest directly",
+    )
     args = parser.parse_args(argv)
 
     if args.migrate:
@@ -46,7 +52,11 @@ def main(argv: list[str] | None = None) -> int:
         db.apply_migrations()
         logger.info("migrations done")
 
-    results = run_ingestion()
+    requested_slugs = None
+    if args.slugs:
+        requested_slugs = [slug.strip() for slug in args.slugs.split(",")]
+
+    results = run_ingestion(requested_slugs)
 
     new = [r for r in results if not r.skipped]
     skipped = [r for r in results if r.skipped]

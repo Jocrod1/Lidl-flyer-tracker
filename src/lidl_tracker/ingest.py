@@ -36,6 +36,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from pathlib import Path
+from typing import Sequence
 
 from .acquisition import FlyerMeta, LidlLeafletClient
 from .models.flyer import FlyerRecord, FlyerStatus
@@ -149,12 +150,22 @@ def ingest_flyer(
     )
 
 
-def run_ingestion() -> list[IngestionResult]:
-    """Discover all current Lidl ES flyers and ingest any that are new."""
+def run_ingestion(slugs: Sequence[str] | None = None) -> list[IngestionResult]:
+    """Ingest currently advertised flyers or fetch specific flyers by slug."""
     results: list[IngestionResult] = []
+    requested_slugs = _normalize_slugs(slugs)
     with LidlLeafletClient() as client:
-        flyers = client.discover()
-        logger.info("discovered %d flyers", len(flyers))
+        if requested_slugs is None:
+            flyers = client.discover()
+            logger.info("discovered %d flyers", len(flyers))
+        else:
+            flyers = []
+            for slug in requested_slugs:
+                try:
+                    flyers.append(client.fetch_flyer_meta(slug))
+                except Exception:
+                    logger.exception("failed to fetch flyer slug %s", slug)
+            logger.info("fetched %d requested flyers", len(flyers))
         for flyer in flyers:
             try:
                 result = ingest_flyer(flyer, client)
@@ -162,3 +173,17 @@ def run_ingestion() -> list[IngestionResult]:
             except Exception:
                 logger.exception("failed to ingest flyer %s", flyer.name)
     return results
+
+
+def run_ingestion_by_slug(slugs: Sequence[str] | None = None) -> list[IngestionResult]:
+    """Backward-compatible alias for slug-aware ingestion."""
+    return run_ingestion(slugs)
+
+
+def _normalize_slugs(slugs: Sequence[str] | None) -> list[str] | None:
+    if slugs is None:
+        return None
+    normalized = [slug.strip().lower() for slug in slugs if slug and slug.strip()]
+    if not normalized:
+        return None
+    return list(dict.fromkeys(normalized))
