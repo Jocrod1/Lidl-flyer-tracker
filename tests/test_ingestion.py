@@ -64,6 +64,11 @@ def _make_existing_record() -> FlyerRecord:
     )
 
 
+def _insert_with_id(record: FlyerRecord) -> FlyerRecord:
+    record.id = 1
+    return record
+
+
 # ---------------------------------------------------------------------------
 # Ingestion: new flyer
 # ---------------------------------------------------------------------------
@@ -76,9 +81,13 @@ class TestIngestNewFlyer:
 
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload,
             patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
-            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=lambda r: r) as mock_insert,
+            patch("lidl_tracker.ingest.r2.upload_json") as mock_upload_json,
+            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=_insert_with_id) as mock_insert,
+            patch("lidl_tracker.ingest.db.upsert_product_cards") as mock_upsert_cards,
         ):
             result = ingest_flyer(flyer, mock_client, now=NOW)
 
@@ -87,6 +96,8 @@ class TestIngestNewFlyer:
         assert result.content_hash == PDF_HASH
         assert result.storage_key == STORAGE_KEY
         mock_upload.assert_called_once_with(STORAGE_KEY, PDF_BYTES)
+        mock_upload_json.assert_called_once()
+        mock_upsert_cards.assert_called_once()
         mock_insert.assert_called_once()
 
     def test_new_flyer_uses_deterministic_key(self, monkeypatch):
@@ -104,9 +115,13 @@ class TestIngestNewFlyer:
 
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.upload_pdf", side_effect=capture_upload),
             patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
-            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=lambda r: r),
+            patch("lidl_tracker.ingest.r2.upload_json"),
+            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=_insert_with_id),
+            patch("lidl_tracker.ingest.db.upsert_product_cards"),
         ):
             ingest_flyer(flyer1, mock_client, now=NOW)
             ingest_flyer(flyer2, mock_client, now=NOW)
@@ -128,15 +143,20 @@ class TestDuplicateFlyer:
 
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=existing),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.object_exists", return_value=True),
+            patch("lidl_tracker.ingest.r2.upload_json") as mock_upload_json,
             patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload,
             patch("lidl_tracker.ingest.db.insert_flyer") as mock_insert,
+            patch("lidl_tracker.ingest.db.upsert_product_cards") as mock_upsert_cards,
         ):
             result = ingest_flyer(flyer, mock_client, now=NOW)
 
         assert result.skipped is True
         mock_upload.assert_not_called()
         mock_insert.assert_not_called()
+        mock_upload_json.assert_called_once()
+        mock_upsert_cards.assert_called_once()
 
     def test_duplicate_hash_reupload_if_r2_missing(self):
         """If DB record exists but R2 object is gone, re-upload without DB insert."""
@@ -147,9 +167,12 @@ class TestDuplicateFlyer:
 
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=existing),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
             patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload,
+            patch("lidl_tracker.ingest.r2.upload_json"),
             patch("lidl_tracker.ingest.db.insert_flyer") as mock_insert,
+            patch("lidl_tracker.ingest.db.upsert_product_cards"),
         ):
             result = ingest_flyer(flyer, mock_client, now=NOW)
 
@@ -170,6 +193,7 @@ class TestFailureHandling:
 
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
             patch("lidl_tracker.ingest.r2.upload_pdf", side_effect=RuntimeError("R2 down")),
         ):
             with pytest.raises(RuntimeError, match="R2 down"):
@@ -182,6 +206,7 @@ class TestFailureHandling:
 
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
             patch("lidl_tracker.ingest.r2.upload_pdf"),
             patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
             patch("lidl_tracker.ingest.db.insert_flyer", side_effect=Exception("DB down")),
@@ -204,6 +229,8 @@ class TestFailureHandling:
         # First attempt: upload ok, DB fails
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.upload_pdf", side_effect=record_upload),
             patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
             patch("lidl_tracker.ingest.db.insert_flyer", side_effect=Exception("DB down")),
@@ -216,9 +243,13 @@ class TestFailureHandling:
         # Second attempt: DB now works, R2 overwrites same key (still 1 new key call)
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.upload_pdf", side_effect=record_upload),
             patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
-            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=lambda r: r),
+            patch("lidl_tracker.ingest.r2.upload_json"),
+            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=_insert_with_id),
+            patch("lidl_tracker.ingest.db.upsert_product_cards"),
         ):
             result = ingest_flyer(flyer, mock_client, now=NOW)
 
@@ -226,6 +257,73 @@ class TestFailureHandling:
         assert len(upload_calls) == 2
         # Both calls used the same deterministic key
         assert upload_calls[0] == upload_calls[1]
+
+
+class TestExtractionPersistence:
+    def test_extracted_cards_are_uploaded_and_upserted(self):
+        flyer = _make_flyer()
+        mock_client = MagicMock()
+        mock_client._client.stream.return_value.__enter__.return_value.read.return_value = PDF_BYTES
+        cards = [
+            {
+                "page": 1,
+                "bbox": [10.0, 20.0, 30.0, 40.0],
+                "brand": "CHEF SELECT",
+                "name": "Guacamole",
+                "description": "96% aguacate.",
+                "quantity": {"value": 500.0, "unit": "g", "raw": "500 g"},
+                "price": 3.75,
+                "reference_price": None,
+                "unit_prices": [{"value": 7.5, "unit": "kg", "basis": 1, "per_unit": 7.5, "raw": "7,50 €/kg"}],
+                "discount_percent": None,
+                "lidl_plus": False,
+                "currency": "EUR",
+                "status": "ok",
+                "warnings": [],
+                "notes": ["no_unit_price"],
+                "raw_text": "CHEF SELECT\nGuacamole",
+                "parser_version": "0.1.0",
+            }
+        ]
+
+        with (
+            patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
+            patch("lidl_tracker.ingest.r2.upload_pdf"),
+            patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
+            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=_insert_with_id),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=cards),
+            patch("lidl_tracker.ingest.r2.upload_json") as mock_upload_json,
+            patch("lidl_tracker.ingest.db.upsert_product_cards") as mock_upsert,
+        ):
+            ingest_flyer(flyer, mock_client, now=NOW)
+
+        upload_key, payload = mock_upload_json.call_args.args
+        assert upload_key == "flyers/2025/07/" + PDF_HASH + ".cards.json"
+        assert payload["content_hash"] == PDF_HASH
+        assert payload["card_count"] == 1
+        assert payload["cards"][0]["card_hash"]
+        assert payload["cards"][0]["raw_text"] == "CHEF SELECT\nGuacamole"
+        mock_upsert.assert_called_once_with(1, payload["cards"])
+
+    def test_existing_record_uses_existing_storage_key_for_extraction_json(self):
+        flyer = _make_flyer()
+        mock_client = MagicMock()
+        mock_client._client.stream.return_value.__enter__.return_value.read.return_value = PDF_BYTES
+        existing = _make_existing_record()
+        existing.storage_key = "flyers/2025/06/" + PDF_HASH + ".pdf"
+
+        with (
+            patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=existing),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=True),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
+            patch("lidl_tracker.ingest.r2.upload_json") as mock_upload_json,
+            patch("lidl_tracker.ingest.db.upsert_product_cards"),
+        ):
+            ingest_flyer(flyer, mock_client, now=NOW)
+
+        upload_key, _ = mock_upload_json.call_args.args
+        assert upload_key == "flyers/2025/06/" + PDF_HASH + ".cards.json"
 
 
 class TestSlugIngestion:

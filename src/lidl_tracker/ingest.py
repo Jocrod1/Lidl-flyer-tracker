@@ -34,12 +34,17 @@ detects that and re-uploads before updating the status.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import logging
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
 from .acquisition import FlyerMeta, LidlLeafletClient
+from .cards import extract_document_cards
 from .models.flyer import FlyerRecord, FlyerStatus
+from .pdf_extract import extract_all
 from .storage import database as db
 from .storage import r2
 
@@ -47,7 +52,18 @@ logger = logging.getLogger(__name__)
 
 
 class IngestionResult:
-    __slots__ = ("flyer_meta", "status", "skipped", "storage_key", "content_hash")
+    __slots__ = (
+        "flyer_meta",
+        "status",
+        "skipped",
+        "storage_key",
+        "content_hash",
+        "flyer_existing",
+        "pdf_existing",
+        "extracted_cards",
+        "persisted_cards",
+        "extraction_key",
+    )
 
     def __init__(
         self,
@@ -56,12 +72,23 @@ class IngestionResult:
         skipped: bool,
         storage_key: str,
         content_hash: str,
+        *,
+        flyer_existing: bool = False,
+        pdf_existing: bool = False,
+        extracted_cards: int = 0,
+        persisted_cards: int = 0,
+        extraction_key: str = "",
     ) -> None:
         self.flyer_meta = flyer_meta
         self.status = status
         self.skipped = skipped
         self.storage_key = storage_key
         self.content_hash = content_hash
+        self.flyer_existing = flyer_existing
+        self.pdf_existing = pdf_existing
+        self.extracted_cards = extracted_cards
+        self.persisted_cards = persisted_cards
+        self.extraction_key = extraction_key
 
     def __repr__(self) -> str:  # pragma: no cover
         return (
@@ -75,6 +102,44 @@ def _download_pdf_bytes(client: LidlLeafletClient, pdf_url: str) -> bytes:
     with client._client.stream("GET", pdf_url) as resp:
         resp.raise_for_status()
         return resp.read()
+
+
+def _extract_cards_from_pdf_bytes(pdf_bytes: bytes) -> list[dict]:
+    """Run the existing extraction algorithm and return card dicts."""
+    with tempfile.TemporaryDirectory(prefix="lidl-flyer-") as tmpdir:
+        pdf_path = Path(tmpdir) / "flyer.pdf"
+        pdf_path.write_bytes(pdf_bytes)
+        pages = extract_all(pdf_path)
+    return [card.to_dict() for card in extract_document_cards(pages)]
+
+
+def _card_hash(card: dict) -> str:
+    raw = json.dumps(card, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _persist_extraction(
+    flyer_record: FlyerRecord,
+    content_hash: str,
+    pdf_bytes: bytes,
+) -> tuple[int, int, str]:
+    cards = _extract_cards_from_pdf_bytes(pdf_bytes)
+    cards_with_hash = [{**card, "card_hash": _card_hash(card)} for card in cards]
+
+    extraction_key = r2.extraction_key_for_pdf_key(flyer_record.storage_key)
+    payload = {
+        "flyer_id": flyer_record.id,
+        "content_hash": content_hash,
+        "pdf_storage_key": flyer_record.storage_key,
+        "card_count": len(cards_with_hash),
+        "cards": cards_with_hash,
+    }
+    r2.upload_json(extraction_key, payload)
+
+    if flyer_record.id is None:
+        raise RuntimeError("flyer id is required to persist extracted cards")
+    db.upsert_product_cards(flyer_record.id, cards_with_hash)
+    return len(cards_with_hash), len(cards_with_hash), extraction_key
 
 
 def ingest_flyer(
@@ -108,19 +173,41 @@ def ingest_flyer(
     existing = db.get_flyer_by_hash(content_hash)
     if existing is not None:
         logger.info("already ingested (hash match): %s", flyer.name)
+        flyer_record = existing
+        storage_key = flyer_record.storage_key
         # If R2 object is somehow missing, re-upload it.
-        if not r2.object_exists(storage_key):
+        pdf_already_exists = r2.object_exists(storage_key)
+        if not pdf_already_exists:
             logger.warning("DB record exists but R2 object missing — re-uploading")
             r2.upload_pdf(storage_key, pdf_bytes)
+        extracted_cards, persisted_cards, extraction_key = _persist_extraction(
+            flyer_record, content_hash, pdf_bytes
+        )
+        logger.info(
+            "ingestion_result slug=%s pdf_sha256=%s flyer=%s pdf=%s extracted_cards=%d persisted_cards=%d extraction_json_key=%s",
+            flyer.slug,
+            content_hash,
+            "existing",
+            "existing" if pdf_already_exists else "new",
+            extracted_cards,
+            persisted_cards,
+            extraction_key,
+        )
         return IngestionResult(
             flyer_meta=flyer,
             status=existing.status,
             skipped=True,
             storage_key=storage_key,
             content_hash=content_hash,
+            flyer_existing=True,
+            pdf_existing=pdf_already_exists,
+            extracted_cards=extracted_cards,
+            persisted_cards=persisted_cards,
+            extraction_key=extraction_key,
         )
 
     # --- Step 4: upload to R2 ---
+    pdf_already_exists = r2.object_exists(storage_key)
     logger.info("uploading to R2: %s", storage_key)
     r2.upload_pdf(storage_key, pdf_bytes)
     if not r2.verify_upload(storage_key, content_hash):
@@ -138,8 +225,21 @@ def ingest_flyer(
         downloaded_at=downloaded_at,
         status=FlyerStatus.STORED,
     )
-    db.insert_flyer(record)
-    logger.info("ingested flyer: %s (id=%s)", flyer.name, record.id)
+    flyer_record = db.insert_flyer(record)
+    logger.info("ingested flyer: %s (id=%s)", flyer.name, flyer_record.id)
+    extracted_cards, persisted_cards, extraction_key = _persist_extraction(
+        flyer_record, content_hash, pdf_bytes
+    )
+    logger.info(
+        "ingestion_result slug=%s pdf_sha256=%s flyer=%s pdf=%s extracted_cards=%d persisted_cards=%d extraction_json_key=%s",
+        flyer.slug,
+        content_hash,
+        "new",
+        "existing" if pdf_already_exists else "new",
+        extracted_cards,
+        persisted_cards,
+        extraction_key,
+    )
 
     return IngestionResult(
         flyer_meta=flyer,
@@ -147,6 +247,11 @@ def ingest_flyer(
         skipped=False,
         storage_key=storage_key,
         content_hash=content_hash,
+        flyer_existing=False,
+        pdf_existing=pdf_already_exists,
+        extracted_cards=extracted_cards,
+        persisted_cards=persisted_cards,
+        extraction_key=extraction_key,
     )
 
 

@@ -73,6 +73,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"            hash={r.content_hash[:16]}…  key={r.storage_key}")
     for r in skipped:
         print(f"  [SKIP]    {r.flyer_meta.name}")
+    for r in results:
+        slug = getattr(r.flyer_meta, "slug", "")
+        flyer_state = "existing" if r.flyer_existing else "new"
+        pdf_state = "existing" if r.pdf_existing else "new"
+        print(f"  slug={slug}")
+        print(f"  pdf_sha256={r.content_hash}")
+        print(f"  flyer={flyer_state}")
+        print(f"  pdf={pdf_state}")
+        print(f"  extracted_cards={r.extracted_cards}")
+        print(f"  persisted_upserted_cards={r.persisted_cards}")
+        print(f"  extraction_json_key={r.extraction_key}")
+        print("")
 
     return 1 if failed_count else 0
 

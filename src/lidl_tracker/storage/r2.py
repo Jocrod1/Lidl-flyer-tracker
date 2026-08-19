@@ -15,6 +15,7 @@ The same PDF content always maps to the same key (determined by SHA-256).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 from typing import BinaryIO
@@ -45,6 +46,13 @@ def object_key_for_hash(content_hash: str, year: str, month: str) -> str:
     canonical identifier).
     """
     return f"flyers/{year}/{month}/{content_hash}.pdf"
+
+
+def extraction_key_for_pdf_key(pdf_key: str) -> str:
+    """Return the extraction JSON key for an existing PDF object key."""
+    if not pdf_key.endswith(".pdf"):
+        raise ValueError(f"expected PDF key ending in .pdf, got: {pdf_key}")
+    return f"{pdf_key[:-4]}.cards.json"
 
 
 def sha256_bytes(data: bytes, chunk_size: int = 1 << 20) -> str:
@@ -94,6 +102,17 @@ def upload_pdf(key: str, data: bytes) -> None:
         Key=key,
         Body=data,
         ContentType="application/pdf",
+    )
+
+
+def upload_json(key: str, payload: object) -> None:
+    """Upload JSON payload bytes to R2 under *key*."""
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    _client().put_object(
+        Bucket=_bucket(),
+        Key=key,
+        Body=data,
+        ContentType="application/json; charset=utf-8",
     )
 
 

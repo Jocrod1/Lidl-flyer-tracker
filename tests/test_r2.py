@@ -5,15 +5,19 @@ No real Cloudflare credentials required — boto3 calls are mocked.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from lidl_tracker.storage.r2 import (
+    extraction_key_for_pdf_key,
     object_key_for_hash,
     object_exists,
     sha256_bytes,
     sha256_file,
+    upload_json,
     upload_pdf,
     verify_upload,
 )
@@ -35,10 +39,16 @@ class TestSha256:
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         )
 
-    def test_sha256_file(self, tmp_path):
-        f = tmp_path / "test.pdf"
-        f.write_bytes(b"hello")
-        assert sha256_file(f) == sha256_bytes(b"hello")
+    def test_sha256_file(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", dir=".", delete=False) as handle:
+            handle.write(b"hello")
+            path = handle.name
+        try:
+            assert sha256_file(Path(path)) == sha256_bytes(b"hello")
+        finally:
+            import os
+
+            os.remove(path)
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +70,12 @@ class TestObjectKey:
         k1 = object_key_for_hash("aaa", "2025", "07")
         k2 = object_key_for_hash("bbb", "2025", "07")
         assert k1 != k2
+
+    def test_extraction_key_uses_same_prefix_and_hash(self):
+        assert (
+            extraction_key_for_pdf_key("flyers/2025/07/abc123.pdf")
+            == "flyers/2025/07/abc123.cards.json"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -138,3 +154,21 @@ class TestUploadPdf:
         with patch("lidl_tracker.storage.r2._client", return_value=mock_client):
             with pytest.raises(ClientError):
                 upload_pdf("flyers/2025/07/abc.pdf", b"%PDF-fake")
+
+
+class TestUploadJson:
+    def test_upload_json_calls_put_object(self, monkeypatch):
+        monkeypatch.setenv("R2_ENDPOINT_URL", R2_ENV["R2_ENDPOINT_URL"])
+        monkeypatch.setenv("R2_ACCESS_KEY_ID", R2_ENV["R2_ACCESS_KEY_ID"])
+        monkeypatch.setenv("R2_SECRET_ACCESS_KEY", R2_ENV["R2_SECRET_ACCESS_KEY"])
+        monkeypatch.setenv("R2_BUCKET_NAME", R2_ENV["R2_BUCKET_NAME"])
+
+        mock_client = MagicMock()
+        mock_client.put_object.return_value = {}
+        with patch("lidl_tracker.storage.r2._client", return_value=mock_client):
+            upload_json("flyers/2025/07/abc123.cards.json", {"cards": []})
+
+        kwargs = mock_client.put_object.call_args.kwargs
+        assert kwargs["Bucket"] == "test-bucket"
+        assert kwargs["Key"] == "flyers/2025/07/abc123.cards.json"
+        assert kwargs["ContentType"] == "application/json; charset=utf-8"
