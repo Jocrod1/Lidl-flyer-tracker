@@ -116,6 +116,17 @@ def upload_json(key: str, payload: object) -> None:
     )
 
 
+def upload_object(key: str, data: bytes, content_type: str | None = None) -> None:
+    kwargs = {
+        "Bucket": _bucket(),
+        "Key": key,
+        "Body": data,
+    }
+    if content_type:
+        kwargs["ContentType"] = content_type
+    _client().put_object(**kwargs)
+
+
 def verify_upload(key: str, expected_hash: str) -> bool:
     """Confirm the stored object exists and its ETag matches expectations.
 

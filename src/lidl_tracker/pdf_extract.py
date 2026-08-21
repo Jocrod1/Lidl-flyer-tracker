@@ -8,6 +8,7 @@ raw layer stays debuggable and reusable.
 from __future__ import annotations
 
 import dataclasses
+import json
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -65,6 +66,7 @@ class PageInfo:
     spans: list[Span]
     image_count: int
     drawing_count: int
+    images: list[dict[str, Any]]
 
     @property
     def text_char_count(self) -> int:
@@ -104,6 +106,25 @@ def extract_page(page: pymupdf.Page, page_number: int) -> PageInfo:
                     )
                 )
 
+    images: list[dict[str, Any]] = []
+    for image in page.get_images(full=True):
+        xref = image[0]
+        try:
+            rects = [tuple(r) for r in page.get_image_rects(xref)]
+        except Exception:
+            rects = []
+        images.append(
+            {
+                "xref": xref,
+                "bbox": [list(r) for r in rects],
+                "width": image[2],
+                "height": image[3],
+                "bpc": image[4],
+                "colorspace": image[5],
+                "alt": image[7] if len(image) > 7 else None,
+            }
+        )
+
     return PageInfo(
         number=page_number,
         width=page.rect.width,
@@ -111,6 +132,7 @@ def extract_page(page: pymupdf.Page, page_number: int) -> PageInfo:
         spans=spans,
         image_count=len(page.get_images(full=True)),
         drawing_count=len(page.get_drawings()),
+        images=images,
     )
 
 

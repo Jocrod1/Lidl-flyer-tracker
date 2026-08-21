@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import argparse
 import collections
+import dataclasses
 import json
 import sys
 from pathlib import Path
 
 from .cards import extract_document_cards
 from .pdf_extract import extract_all
+from .product_images import extract_card_image
 
 
 def render(card) -> str:
@@ -52,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--show", action="store_true", help="print every card")
     parser.add_argument("--failures", action="store_true", help="print failed/partial")
     parser.add_argument("--json", type=Path, help="write all cards to JSON")
+    parser.add_argument("--extract-card-images", action="store_true", help="write image diagnostics")
+    parser.add_argument("--debug-dir", type=Path, help="output directory for extracted images")
     args = parser.parse_args(argv)
 
     if not args.pdf.exists():
@@ -129,6 +133,16 @@ def main(argv: list[str] | None = None) -> int:
             encoding="utf-8",
         )
         print(f"\nwrote {total} cards -> {args.json}")
+
+    if args.extract_card_images and args.debug_dir:
+        args.debug_dir.mkdir(parents=True, exist_ok=True)
+        for idx, card in enumerate(cards, start=1):
+            data, result = extract_card_image(args.pdf, card, card_index=idx)
+            if data is None:
+                continue
+            (args.debug_dir / f"card-{idx:03d}.bin").write_bytes(data)
+            (args.debug_dir / f"card-{idx:03d}.json").write_text(json.dumps(dataclasses.asdict(result), indent=2), encoding="utf-8")
+            print(f"card {idx}: {result.method}")
 
     return 0
 

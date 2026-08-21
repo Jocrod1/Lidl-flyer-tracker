@@ -45,6 +45,7 @@ from .acquisition import FlyerMeta, LidlLeafletClient
 from .cards import extract_document_cards
 from .models.flyer import FlyerRecord, FlyerStatus
 from .pdf_extract import extract_all
+from .product_images import extract_card_image, object_key_for_card
 from .storage import database as db
 from .storage import r2
 
@@ -124,7 +125,40 @@ def _persist_extraction(
     pdf_bytes: bytes,
 ) -> tuple[int, int, str]:
     cards = _extract_cards_from_pdf_bytes(pdf_bytes)
-    cards_with_hash = [{**card, "card_hash": _card_hash(card)} for card in cards]
+    cards_with_hash = []
+    with tempfile.TemporaryDirectory(prefix="lidl-flyer-") as tmpdir:
+        pdf_path = Path(tmpdir) / "flyer.pdf"
+        pdf_path.write_bytes(pdf_bytes)
+        for index, card in enumerate(cards):
+            try:
+                card_obj = type("C", (), card)()
+                data, result = extract_card_image(pdf_path, card_obj, card_index=index + 1)
+                if data is not None and flyer_record.id is not None and result.method != "none":
+                    ext = "png" if result.content_type == "image/png" else "jpg"
+                    image_key = object_key_for_card(flyer_record.id, index + 1, ext)
+                    try:
+                        r2.upload_object(image_key, data, result.content_type)
+                    except Exception:
+                        logger.exception("image upload failed flyer_id=%s card_index=%d", flyer_record.id, index + 1)
+                    else:
+                        card["image_object_key"] = image_key
+                        card["image_content_type"] = result.content_type
+                        card["image_width"] = result.width
+                        card["image_height"] = result.height
+                logger.info(
+                    "card_image flyer_id=%s card_index=%d page=%s bbox=%s method=%s candidates=%d selected=%s reason=%s",
+                    flyer_record.id,
+                    index + 1,
+                    card.get("page"),
+                    card.get("bbox"),
+                    result.method,
+                    len(result.candidates),
+                    result.selected_image,
+                    result.reason,
+                )
+            except Exception:
+                logger.exception("card image extraction failed flyer_id=%s card_index=%d", flyer_record.id, index + 1)
+            cards_with_hash.append({**card, "card_hash": _card_hash(card)})
 
     extraction_key = r2.extraction_key_for_pdf_key(flyer_record.storage_key)
     payload = {

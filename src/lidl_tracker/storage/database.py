@@ -72,6 +72,10 @@ def apply_migrations(conn=None) -> None:
         quantity          JSONB,
         price             DOUBLE PRECISION,
         reference_price   DOUBLE PRECISION,
+        image_object_key  TEXT,
+        image_content_type TEXT,
+        image_width       INTEGER,
+        image_height      INTEGER,
         unit_prices       JSONB       NOT NULL DEFAULT '[]'::jsonb,
         discount_percent  INTEGER,
         lidl_plus         BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -177,11 +181,13 @@ def upsert_product_cards(flyer_id: int, cards: list[dict]) -> None:
                 INSERT INTO product_cards
                     (flyer_id, card_hash, card_index, page, bbox, raw_text,
                      brand, name, description, quantity, price, reference_price,
+                     image_object_key, image_content_type, image_width, image_height,
                      unit_prices, discount_percent, lidl_plus, currency, status,
                      parser_version, warnings, notes, payload)
                 VALUES
                     (%(flyer_id)s, %(card_hash)s, %(card_index)s, %(page)s, %(bbox)s, %(raw_text)s,
                      %(brand)s, %(name)s, %(description)s, %(quantity)s, %(price)s, %(reference_price)s,
+                     %(image_object_key)s, %(image_content_type)s, %(image_width)s, %(image_height)s,
                      %(unit_prices)s, %(discount_percent)s, %(lidl_plus)s, %(currency)s, %(status)s,
                      %(parser_version)s, %(warnings)s, %(notes)s, %(payload)s)
                 ON CONFLICT (flyer_id, parser_version, card_hash) DO UPDATE SET
@@ -195,6 +201,10 @@ def upsert_product_cards(flyer_id: int, cards: list[dict]) -> None:
                     quantity = EXCLUDED.quantity,
                     price = EXCLUDED.price,
                     reference_price = EXCLUDED.reference_price,
+                    image_object_key = EXCLUDED.image_object_key,
+                    image_content_type = EXCLUDED.image_content_type,
+                    image_width = EXCLUDED.image_width,
+                    image_height = EXCLUDED.image_height,
                     unit_prices = EXCLUDED.unit_prices,
                     discount_percent = EXCLUDED.discount_percent,
                     lidl_plus = EXCLUDED.lidl_plus,
@@ -218,6 +228,10 @@ def upsert_product_cards(flyer_id: int, cards: list[dict]) -> None:
                     "quantity": psycopg2.extras.Json(card.get("quantity")),
                     "price": card.get("price"),
                     "reference_price": card.get("reference_price"),
+                    "image_object_key": card.get("image_object_key"),
+                    "image_content_type": card.get("image_content_type"),
+                    "image_width": card.get("image_width"),
+                    "image_height": card.get("image_height"),
                     "unit_prices": psycopg2.extras.Json(card.get("unit_prices") or []),
                     "discount_percent": card.get("discount_percent"),
                     "lidl_plus": bool(card.get("lidl_plus")),

@@ -17,6 +17,7 @@ from lidl_tracker.storage.r2 import (
     object_exists,
     sha256_bytes,
     sha256_file,
+    upload_object,
     upload_json,
     upload_pdf,
     verify_upload,
@@ -172,3 +173,17 @@ class TestUploadJson:
         assert kwargs["Bucket"] == "test-bucket"
         assert kwargs["Key"] == "flyers/2025/07/abc123.cards.json"
         assert kwargs["ContentType"] == "application/json; charset=utf-8"
+
+
+class TestUploadObject:
+    def test_upload_object_sets_content_type(self, monkeypatch):
+        monkeypatch.setenv("R2_ENDPOINT_URL", R2_ENV["R2_ENDPOINT_URL"])
+        monkeypatch.setenv("R2_ACCESS_KEY_ID", R2_ENV["R2_ACCESS_KEY_ID"])
+        monkeypatch.setenv("R2_SECRET_ACCESS_KEY", R2_ENV["R2_SECRET_ACCESS_KEY"])
+        monkeypatch.setenv("R2_BUCKET_NAME", R2_ENV["R2_BUCKET_NAME"])
+
+        mock_client = MagicMock()
+        with patch("lidl_tracker.storage.r2._client", return_value=mock_client):
+            upload_object("k", b"d", "image/png")
+
+        mock_client.put_object.assert_called_once()
