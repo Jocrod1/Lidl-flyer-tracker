@@ -39,7 +39,8 @@ def span(text, x0, y0, font, size=10.0, width=60.0, height=11.0):
 
 def make_page(spans):
     return PageInfo(
-        number=1, width=468, height=794, spans=spans, image_count=0, drawing_count=0
+        number=1, width=468, height=794, spans=spans, image_count=0, drawing_count=0,
+        images=[]
     )
 
 
