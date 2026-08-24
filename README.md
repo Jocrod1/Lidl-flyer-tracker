@@ -37,6 +37,25 @@ python -m lidl_tracker.cli_extract data/raw/<flyer>.pdf --json data/out/f.json
 pytest
 ```
 
+## Local development services
+
+The production integrations can be exercised locally without touching the
+production database, R2 bucket, or email account. Docker Compose provides
+PostgreSQL, an S3-compatible MinIO bucket, and a Mailpit SMTP inbox.
+
+```bash
+cp .env.example .env.local
+docker compose up -d
+set -a && . ./.env.local && set +a
+python -m lidl_tracker.cli_ingest --migrate --slug <slug>
+python -m lidl_tracker.cli_watch --query "queso en salmuera" --to test@example.com
+pytest
+```
+
+The MinIO console is available at http://localhost:9001 (credentials
+`minio` / `minio-password`) and the Mailpit inbox at http://localhost:8025.
+Use `docker compose down -v` to discard the local database and bucket.
+
 ## Results on real flyers (2026-08-12)
 
 | flyer             | pages | cards | ok  | partial | failed | name | price | quantity | unit price |
@@ -73,5 +92,6 @@ as the parser improves.
 
 ## Not implemented yet (deliberately)
 
-Database persistence, entity resolution, appearance history, recurrence
-prediction, notifications, scheduler.
+Entity resolution, appearance history, recurrence prediction, and a
+production scheduler are not implemented yet. Database persistence, R2
+storage, product-image storage, and notifications are implemented.

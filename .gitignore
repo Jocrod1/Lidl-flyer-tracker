@@ -15,3 +15,7 @@ data/watch.log
 # across runs (ephemeral runners lose anything not committed).
 data/state/*
 !data/state/watch_state.json
+
+# Local service data and developer environment files.
+.local/
+.env.local
