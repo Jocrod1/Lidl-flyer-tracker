@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from ranker import rank_cards
+from tools.image_ranking.ranker import rank_cards
 
 
 def load_inspection(path: Path) -> list[dict]:

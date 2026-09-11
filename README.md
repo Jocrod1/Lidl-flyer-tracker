@@ -10,7 +10,7 @@ needed — see `docs/pdf-structure.md` for why.
 
 ```bash
 python -m venv .venv
-.venv\Scripts\python -m pip install -e ".[dev]"
+.venv\Scripts\python -m pip install -e "./ingestion[dev]"
 ```
 
 ## Usage
@@ -34,7 +34,7 @@ python -m lidl_tracker.cli_extract data/raw/<flyer>.pdf --page 13 --show
 python -m lidl_tracker.cli_extract data/raw/<flyer>.pdf --failures
 python -m lidl_tracker.cli_extract data/raw/<flyer>.pdf --json data/out/f.json
 
-pytest
+pytest ingestion/tests
 ```
 
 ## Local development services
@@ -49,7 +49,7 @@ docker compose up -d
 set -a && . ./.env.local && set +a
 python -m lidl_tracker.cli_ingest --migrate --slug <slug>
 python -m lidl_tracker.cli_watch --query "queso en salmuera" --to test@example.com
-pytest
+pytest ingestion/tests
 ```
 
 The MinIO console is available at http://localhost:9001 (credentials
@@ -72,15 +72,21 @@ Use `docker compose down -v` to discard the local database and bucket.
 ## Layout
 
 ```
-src/lidl_tracker/
-    acquisition.py    Schwarz leaflet API client + idempotent downloader
-    pdf_extract.py    PyMuPDF -> spans with coordinates and fonts
-    parsers.py        pure text -> price / quantity / unit price / units
-    cards.py          spatial grouping + field extraction
-    cli_acquire.py    cli_inspect.py    cli_extract.py
-tools/                one-off reverse-engineering scripts (Playwright)
-docs/                 acquisition.md, pdf-structure.md
-tests/                58 tests, no PDF required
+apps/                  future user-facing/independently runnable applications
+    web/                Next.js application (not created yet)
+ingestion/              Python flyer ingestion pipeline
+    pyproject.toml
+    src/lidl_tracker/
+        acquisition.py    Schwarz leaflet API client + idempotent downloader
+        pdf_extract.py    PyMuPDF -> spans with coordinates and fonts
+        parsers.py        pure text -> price / quantity / unit price / units
+        cards.py          spatial grouping + field extraction
+        cli_acquire.py    cli_inspect.py    cli_extract.py
+    tests/              58 tests, no PDF required
+migrations/             database schema history (documentary; applied via inline SQL)
+tools/                  one-off reverse-engineering scripts (Playwright) +
+                        image_ranking/ offline research tool (own tests/)
+docs/                   acquisition.md, pdf-structure.md, scheduling.md
 ```
 
 ## Raw data is preserved

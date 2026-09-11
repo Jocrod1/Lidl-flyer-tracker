@@ -20,22 +20,29 @@ committed because it contains 635 crops and large PDF-derived data. Given
 that directory:
 
 ```bash
-PYTHONPATH=tools/image_ranking \
-python tools/image_ranking/evaluate.py /path/to/pdf_card_inspection \
+python -m tools.image_ranking.evaluate /path/to/pdf_card_inspection \
   --output /tmp/per_card_rankings.json
 ```
 
 To reproduce review images (requires Pillow):
 
 ```bash
-PYTHONPATH=tools/image_ranking \
-python tools/image_ranking/review.py /tmp/per_card_rankings.json \
+python -m tools.image_ranking.review /tmp/per_card_rankings.json \
   --pdf-dir data/raw --inspection-dir /path/to/pdf_card_inspection \
   --classification ambiguous --output /tmp/ambiguous-review
 ```
 
 Use `clear`, `probable`, or `ambiguous` for the classification. The source
 PDFs must have the same filenames recorded in the inspection JSON.
+
+## Tests
+
+This tool has its own test suite, separate from `ingestion/tests`, run
+explicitly with:
+
+```bash
+python -m pytest tools/image_ranking/tests
+```
 
 The original four-flyer evaluation contained 635 cards: 83 clear, 183
 probable, 353 ambiguous, and 16 with no suitable candidate. The method uses
