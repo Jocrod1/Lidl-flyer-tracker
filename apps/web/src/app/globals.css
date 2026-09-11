@@ -1,31 +1,75 @@
 @import "tailwindcss";
 
+/*
+ * Lidl Tracker design tokens.
+ *
+ * Restrained, Lidl-inspired palette: neutral surfaces carry the layout, blue is
+ * the single strong accent, yellow is used sparingly as a highlight. This is a
+ * research tool, not a storefront — no promo reds, no discount styling.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  /* Subtle, Lidl-inspired accent — used sparingly, not a brand recreation. */
-  --color-accent: #0050aa;
-  --color-accent-warm: #ffd400;
+  /* Surfaces */
+  --surface: #ffffff;
+  --surface-muted: #f6f7f9;
+  --surface-sunken: #eef0f4;
+
+  /* Text */
+  --ink: #10151c;
+  --ink-muted: #5b6673;
+  --ink-subtle: #8a94a1;
+
+  /* Lines */
+  --line: #e3e7ec;
+  --line-strong: #cfd5de;
+
+  /* Accents */
+  --brand: #0050aa;
+  --brand-strong: #003c80;
+  --brand-soft: #e8f0fa;
+  --highlight: #ffd400;
+
+  /* Shape */
+  --radius-card: 0.875rem;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-accent: var(--color-accent);
-  --color-accent-warm: var(--color-accent-warm);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-sunken: var(--surface-sunken);
+
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-highlight: var(--highlight);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  body {
+    background-color: var(--surface-muted);
+    color: var(--ink);
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-}
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Consistent, visible focus for keyboard users across custom controls. */
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+
+  /* Remove the browser's default search decorations so the hero input stays clean. */
+  input[type="search"]::-webkit-search-decoration,
+  input[type="search"]::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+  }
 }
