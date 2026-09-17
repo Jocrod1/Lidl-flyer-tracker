@@ -19,3 +19,4 @@ data/state/*
 # Local service data and developer environment files.
 .local/
 .env.local
+.vercel
