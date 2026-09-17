@@ -28,3 +28,9 @@ export function formatLastSeen(isoDate: string): string {
   const monthLabel = MONTHS[monthIndex] ?? month;
   return `${Number(day)} ${monthLabel} ${year}`;
 }
+
+/** Formats an ISO date (YYYY-MM-DD) as the short month label `Aug`, for chart axes. */
+export function formatMonthLabel(isoDate: string): string {
+  const monthIndex = Number(isoDate.split("-")[1]) - 1;
+  return MONTHS[monthIndex] ?? isoDate;
+}

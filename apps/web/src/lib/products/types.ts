@@ -57,3 +57,47 @@ export interface Product {
     tint: string;
   };
 }
+
+/**
+ * A single flyer this product appeared in.
+ *
+ * `flyerId` is intentionally already shaped like a routable identifier so the
+ * Product Detail timeline can link straight to `/flyers/[flyerId]` once the
+ * Flyer Archive/Detail screens exist, without changing this type.
+ */
+export interface ProductAppearance {
+  /** ISO date (YYYY-MM-DD) the flyer went live. */
+  date: string;
+  /** Price shown in that flyer. */
+  price: number;
+  flyerId: string;
+  /** Human-readable flyer label, e.g. "Week 34". */
+  flyerName: string;
+}
+
+/** A single point on the price-history chart, oldest first. */
+export interface PriceHistoryPoint {
+  /** ISO date (YYYY-MM-DD). */
+  date: string;
+  price: number;
+}
+
+/**
+ * Full detail record for a single product page.
+ *
+ * Extends the Product Explorer's `Product` summary with everything
+ * `/products/[slug]` needs. Kept separate from `Product` so the explorer grid
+ * never has to fetch history it doesn't render.
+ */
+export interface ProductDetail extends Product {
+  /** ISO date (YYYY-MM-DD) of the earliest known flyer appearance. */
+  firstSeen: string;
+  /** Total number of recorded flyer appearances. */
+  appearanceCount: number;
+  /** Flyer appearances, most recent first. */
+  appearances: ProductAppearance[];
+  /** Price history, oldest first — ready to plot directly. */
+  priceHistory: PriceHistoryPoint[];
+  /** Highest historical price, when meaningfully above the current price. */
+  referencePrice: number | null;
+}
