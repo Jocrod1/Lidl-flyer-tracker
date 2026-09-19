@@ -149,6 +149,7 @@ class TestDuplicateFlyer:
             patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload,
             patch("lidl_tracker.ingest.db.insert_flyer") as mock_insert,
             patch("lidl_tracker.ingest.db.upsert_product_cards") as mock_upsert_cards,
+            patch("lidl_tracker.ingest.db.update_flyer_slug") as mock_update_slug,
         ):
             result = ingest_flyer(flyer, mock_client, now=NOW)
 
@@ -157,6 +158,7 @@ class TestDuplicateFlyer:
         mock_insert.assert_not_called()
         mock_upload_json.assert_called_once()
         mock_upsert_cards.assert_called_once()
+        mock_update_slug.assert_called_once()
 
     def test_duplicate_hash_reupload_if_r2_missing(self):
         """If DB record exists but R2 object is gone, re-upload without DB insert."""
@@ -173,6 +175,7 @@ class TestDuplicateFlyer:
             patch("lidl_tracker.ingest.r2.upload_json"),
             patch("lidl_tracker.ingest.db.insert_flyer") as mock_insert,
             patch("lidl_tracker.ingest.db.upsert_product_cards"),
+            patch("lidl_tracker.ingest.db.update_flyer_slug"),
         ):
             result = ingest_flyer(flyer, mock_client, now=NOW)
 
@@ -319,6 +322,7 @@ class TestExtractionPersistence:
             patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.upload_json") as mock_upload_json,
             patch("lidl_tracker.ingest.db.upsert_product_cards"),
+            patch("lidl_tracker.ingest.db.update_flyer_slug"),
         ):
             ingest_flyer(flyer, mock_client, now=NOW)
 

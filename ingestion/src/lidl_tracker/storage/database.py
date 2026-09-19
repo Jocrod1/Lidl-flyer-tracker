@@ -58,6 +58,13 @@ def apply_migrations(conn=None) -> None:
     );
     CREATE INDEX IF NOT EXISTS flyers_status_idx ON flyers (status);
 
+    -- Migration 004: backend-minted, persisted flyer slug (nullable
+    -- until backfilled — see backfill_flyer_slugs()).
+    ALTER TABLE flyers ADD COLUMN IF NOT EXISTS slug TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS flyers_slug_unique
+        ON flyers (slug)
+        WHERE slug IS NOT NULL;
+
     CREATE TABLE IF NOT EXISTS product_cards (
         id                BIGSERIAL PRIMARY KEY,
         flyer_id          INTEGER     NOT NULL REFERENCES flyers(id) ON DELETE CASCADE,
@@ -138,11 +145,11 @@ def insert_flyer(record: FlyerRecord) -> FlyerRecord:
             INSERT INTO flyers
                 (source_url, storage_key, category, name,
                  start_date, end_date, content_hash,
-                 downloaded_at, status)
+                 downloaded_at, status, slug)
             VALUES
                 (%(source_url)s, %(storage_key)s, %(category)s, %(name)s,
                  %(start_date)s, %(end_date)s, %(content_hash)s,
-                 %(downloaded_at)s, %(status)s)
+                 %(downloaded_at)s, %(status)s, %(slug)s)
             RETURNING id, created_at
             """,
             {
@@ -155,6 +162,7 @@ def insert_flyer(record: FlyerRecord) -> FlyerRecord:
                 "content_hash": record.content_hash,
                 "downloaded_at": record.downloaded_at,
                 "status": record.status.value,
+                "slug": record.slug,
             },
         )
         row = cur.fetchone()
@@ -170,6 +178,102 @@ def update_flyer_status(content_hash: str, status: FlyerStatus) -> None:
             "UPDATE flyers SET status = %s WHERE content_hash = %s",
             (status.value, content_hash),
         )
+
+
+def update_flyer_slug(content_hash: str, slug: str) -> None:
+    """Set the slug for the row identified by *content_hash*.
+
+    Only updates rows that don't already have a slug — safe to call
+    opportunistically on every ingestion run for legacy rows.
+    """
+    with _cursor() as cur:
+        cur.execute(
+            "UPDATE flyers SET slug = %s WHERE content_hash = %s AND slug IS NULL",
+            (slug, content_hash),
+        )
+
+
+def backfill_flyer_slugs() -> int:
+    """Populate `slug` for any flyer rows inserted before it existed.
+
+    Idempotent — rows that already have a slug are left untouched.
+    Returns the number of rows updated.
+    """
+    from ..slugs import flyer_slug
+
+    with _cursor() as cur:
+        cur.execute(
+            "SELECT id, category, name, start_date, content_hash "
+            "FROM flyers WHERE slug IS NULL"
+        )
+        rows = cur.fetchall()
+        for row in rows:
+            slug = flyer_slug(row["category"], row["name"], row["start_date"], row["content_hash"])
+            cur.execute("UPDATE flyers SET slug = %s WHERE id = %s", (slug, row["id"]))
+    return len(rows)
+
+
+def list_flyers(
+    *,
+    year: Optional[int] = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[tuple[FlyerRecord, int]], int]:
+    """Return a page of flyers (most recent `start_date` first) with per-flyer product counts.
+
+    `start_date` is stored as free-form TEXT (not a SQL DATE), so the year
+    filter matches on the `YYYY-` prefix — this assumes ISO-formatted date
+    strings, which is what the acquisition client currently produces.
+
+    Returns `(items, total)` where each item is `(FlyerRecord, product_count)`.
+    """
+    where_sql = ""
+    params: dict = {}
+    if year is not None:
+        where_sql = "WHERE f.start_date LIKE %(year_pattern)s"
+        params["year_pattern"] = f"{year}-%"
+
+    offset = (page - 1) * page_size
+
+    with _cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) AS count FROM flyers f {where_sql}", params)
+        total = cur.fetchone()["count"]
+
+        cur.execute(
+            f"""
+            SELECT f.*, COUNT(pc.id) AS product_count
+            FROM flyers f
+            LEFT JOIN product_cards pc ON pc.flyer_id = f.id
+            {where_sql}
+            GROUP BY f.id
+            ORDER BY f.start_date DESC NULLS LAST, f.id DESC
+            LIMIT %(limit)s OFFSET %(offset)s
+            """,
+            {**params, "limit": page_size, "offset": offset},
+        )
+        rows = cur.fetchall()
+
+    items = [(_row_to_record(row), row["product_count"]) for row in rows]
+    return items, total
+
+
+def get_flyer_by_slug(slug: str) -> Optional[tuple[FlyerRecord, int]]:
+    """Return `(FlyerRecord, product_count)` for *slug*, or None if not found."""
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT f.*, COUNT(pc.id) AS product_count
+            FROM flyers f
+            LEFT JOIN product_cards pc ON pc.flyer_id = f.id
+            WHERE f.slug = %s
+            GROUP BY f.id
+            """,
+            (slug,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return _row_to_record(row), row["product_count"]
 
 
 def upsert_product_cards(flyer_id: int, cards: list[dict]) -> None:
@@ -248,6 +352,7 @@ def upsert_product_cards(flyer_id: int, cards: list[dict]) -> None:
 def _row_to_record(row: dict) -> FlyerRecord:
     return FlyerRecord(
         id=row["id"],
+        slug=row.get("slug"),
         source_url=row["source_url"],
         storage_key=row["storage_key"],
         category=row["category"],

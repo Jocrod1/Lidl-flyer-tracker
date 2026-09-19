@@ -11,6 +11,7 @@ from lidl_tracker import cli_ingest
 def test_cli_parses_comma_separated_slugs():
     with (
         patch("lidl_tracker.cli_ingest.db.apply_migrations") as mock_migrate,
+        patch("lidl_tracker.cli_ingest.db.backfill_flyer_slugs", return_value=0),
         patch("lidl_tracker.cli_ingest.run_ingestion", return_value=[]) as mock_run,
     ):
         exit_code = cli_ingest.main(["--slug", "folleto-a, folleto-b", "--migrate"])
@@ -35,6 +36,7 @@ def test_cli_reports_per_flyer_pipeline_details(capsys):
     )
     with (
         patch("lidl_tracker.cli_ingest.db.apply_migrations"),
+        patch("lidl_tracker.cli_ingest.db.backfill_flyer_slugs", return_value=0),
         patch("lidl_tracker.cli_ingest.run_ingestion", return_value=[result]),
     ):
         exit_code = cli_ingest.main(["--migrate"])
