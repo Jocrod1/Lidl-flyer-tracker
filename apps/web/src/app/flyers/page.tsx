@@ -1,12 +1,7 @@
 import type { Metadata } from "next";
 
 import { FlyerArchive } from "@/components/flyers/FlyerArchive";
-import {
-  getCurrentFlyer,
-  getFlyerYears,
-  getFlyers,
-  getPastFlyers,
-} from "@/lib/flyers";
+import { getFlyerArchive } from "@/lib/flyers";
 
 export const metadata: Metadata = {
   title: "Flyer Archive",
@@ -20,26 +15,22 @@ export default async function FlyersPage({
   searchParams: Promise<{ year?: string }>;
 }) {
   // Data access lives here so it can be swapped for an API call without
-  // touching any of the presentation components below.
+  // touching any of the presentation components below. It now calls the
+  // real Flyer API (see @/lib/flyers/api-flyers.ts) instead of mock data.
   const { year } = await searchParams;
-  const currentFlyer = getCurrentFlyer();
-  const years = getFlyerYears();
-
   const requestedYear = year ? Number(year) : undefined;
-  const activeYear =
-    requestedYear && years.includes(requestedYear) ? requestedYear : "all";
 
-  const pastFlyers = getPastFlyers().filter((flyer) =>
-    activeYear === "all" ? true : flyer.dateFrom.startsWith(String(activeYear)),
-  );
+  const archive = await getFlyerArchive({
+    year: requestedYear !== undefined && Number.isFinite(requestedYear) ? requestedYear : undefined,
+  });
 
   return (
     <FlyerArchive
-      currentFlyer={currentFlyer}
-      pastFlyers={pastFlyers}
-      totalFlyerCount={getFlyers().length}
-      years={years}
-      activeYear={activeYear}
+      currentFlyer={archive.currentFlyer}
+      pastFlyers={archive.pastFlyers}
+      totalFlyerCount={archive.totalFlyerCount}
+      years={archive.years}
+      activeYear={archive.activeYear}
     />
   );
 }

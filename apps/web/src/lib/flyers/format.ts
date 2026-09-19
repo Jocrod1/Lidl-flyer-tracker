@@ -7,6 +7,13 @@ import { formatLastSeen } from "@/lib/products";
  * e.g. `27 Jul – 2 Aug 2026`.
  */
 export function formatDateRange(dateFrom: string, dateTo: string): string {
+  if (!dateFrom || !dateTo) {
+    // Postgres allows NULL start_date/end_date (see
+    // migrations/001_create_flyers.sql) — render a friendly placeholder
+    // instead of crashing on an unparsable date.
+    return "Dates unavailable";
+  }
+
   const [fromYear, , fromDay] = dateFrom.split("-");
   const [toYear] = dateTo.split("-");
 
