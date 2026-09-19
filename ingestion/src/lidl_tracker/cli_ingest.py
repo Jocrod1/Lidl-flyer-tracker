@@ -51,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("applying database migrations …")
         db.apply_migrations()
         logger.info("migrations done")
+        backfilled = db.backfill_flyer_slugs()
+        if backfilled:
+            logger.info("backfilled slug for %d legacy flyer row(s)", backfilled)
 
     requested_slugs = None
     if args.slugs:

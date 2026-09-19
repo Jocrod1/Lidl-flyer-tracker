@@ -46,6 +46,7 @@ from .cards import extract_document_cards
 from .models.flyer import FlyerRecord, FlyerStatus
 from .pdf_extract import extract_all
 from .product_images import extract_card_image, object_key_for_card
+from .slugs import flyer_slug
 from .storage import database as db
 from .storage import r2
 
@@ -209,6 +210,11 @@ def ingest_flyer(
         logger.info("already ingested (hash match): %s", flyer.name)
         flyer_record = existing
         storage_key = flyer_record.storage_key
+        if flyer_record.slug is None:
+            # Legacy row ingested before slugs existed — backfill it now.
+            slug = flyer_slug(flyer_record.category, flyer_record.name, flyer_record.start_date, content_hash)
+            db.update_flyer_slug(content_hash, slug)
+            flyer_record.slug = slug
         # If R2 object is somehow missing, re-upload it.
         pdf_already_exists = r2.object_exists(storage_key)
         if not pdf_already_exists:
@@ -258,6 +264,7 @@ def ingest_flyer(
         content_hash=content_hash,
         downloaded_at=downloaded_at,
         status=FlyerStatus.STORED,
+        slug=flyer_slug(flyer.category, flyer.name, flyer.start_date, content_hash),
     )
     flyer_record = db.insert_flyer(record)
     logger.info("ingested flyer: %s (id=%s)", flyer.name, flyer_record.id)
