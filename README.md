@@ -13,6 +13,9 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -e "./ingestion[dev]"
 ```
 
+A read-only HTTP API for the Next.js frontend lives in `apps/api` — see
+`apps/api/README.md` and `docs/backend-frontend-integration-plan.md`.
+
 ## Usage
 
 ```bash
@@ -74,6 +77,7 @@ Use `docker compose down -v` to discard the local database and bucket.
 ```
 apps/                  future user-facing/independently runnable applications
     web/                Next.js application (not created yet)
+    api/                Read-only FastAPI service for the frontend (Phase 1: flyers only)
 ingestion/              Python flyer ingestion pipeline
     pyproject.toml
     src/lidl_tracker/

@@ -27,6 +27,7 @@ class FlyerRecord:
     status: FlyerStatus
 
     id: Optional[int] = None
+    slug: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     downloaded_at: Optional[dt.datetime] = None
