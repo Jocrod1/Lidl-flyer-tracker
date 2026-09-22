@@ -5,6 +5,9 @@ Read-only FastAPI service exposing ingested flyer data (Postgres via
 
 This is Phase 1 of `docs/backend-frontend-integration-plan.md`: flyer
 list/detail only. Product endpoints and images land in later phases.
+Render deployment settings are documented in
+`docs/render-deployment.md`. The current deployment is the `main` branch
+served by the `lidl-tracker-api` Render service.
 
 ## Setup
 
@@ -28,6 +31,12 @@ set DATABASE_URL=postgresql://lidl:lidl@localhost:5432/lidl_dev
 ```
 
 Then browse the generated docs at http://localhost:8000/docs.
+
+For a production-style local launch, set `PORT` if needed and run:
+
+```bash
+python -m api.run
+```
 
 ## Endpoints (Phase 1)
 
