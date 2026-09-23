@@ -383,7 +383,7 @@ R2 object keys currently use:
 
 - Flyer PDFs: `flyers/{year}/{month}/{content_hash}.pdf`
 - Extraction JSON: corresponding `.cards.json`
-- Product images: `flyers/{flyer_id}/cards/{card_id}/product-image.{ext}`
+- Product images: `cards/{flyer_id}/Cards/{card_id}/product-image.{ext}`
 
 Only keys are persisted. There is no public URL builder or presigned URL implementation.
 

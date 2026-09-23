@@ -26,7 +26,7 @@ class ProductImageResult:
 
 
 def object_key_for_card(flyer_id: int, card_id: int, ext: str) -> str:
-    return f"flyers/{flyer_id}/cards/{card_id}/product-image.{ext.lstrip('.')}"
+    return f"cards/{flyer_id}/Cards/{card_id}/product-image.{ext.lstrip('.')}"
 
 
 def _rect_tuple(rect: Any) -> tuple[float, float, float, float]:
