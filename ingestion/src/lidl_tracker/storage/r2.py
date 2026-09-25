@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 import boto3
 from botocore.exceptions import ClientError
@@ -106,7 +106,7 @@ def upload_pdf(key: str, data: bytes) -> None:
 
 
 def upload_json(key: str, payload: object) -> None:
-    """Upload JSON payload bytes to R2 under *key*."""
+    """Upload JSON payload bytes to R2 under *key* and confirm it is present."""
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     _client().put_object(
         Bucket=_bucket(),
@@ -114,6 +114,27 @@ def upload_json(key: str, payload: object) -> None:
         Body=data,
         ContentType="application/json; charset=utf-8",
     )
+    if not object_exists(key):
+        raise RuntimeError(f"R2 JSON upload verification failed for {key}")
+
+
+def download_object(key: str) -> bytes:
+    """Download the complete body of an R2 object."""
+    response = _client().get_object(Bucket=_bucket(), Key=key)
+    body = response["Body"]
+    try:
+        return body.read()
+    finally:
+        body.close()
+
+
+def list_objects(prefix: str) -> Iterator[str]:
+    """Yield object keys under *prefix*, handling paginated bucket listings."""
+    client = _client()
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=_bucket(), Prefix=prefix):
+        for item in page.get("Contents", []):
+            yield item["Key"]
 
 
 def upload_object(key: str, data: bytes, content_type: str | None = None) -> None:

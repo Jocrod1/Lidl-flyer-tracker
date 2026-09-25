@@ -78,6 +78,7 @@ class TestIngestNewFlyer:
         flyer = _make_flyer()
         mock_client = MagicMock()
         mock_client._client.stream.return_value.__enter__.return_value.read.return_value = PDF_BYTES
+        operations = []
 
         with (
             patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
@@ -86,9 +87,14 @@ class TestIngestNewFlyer:
             patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload,
             patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
             patch("lidl_tracker.ingest.r2.upload_json") as mock_upload_json,
-            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=_insert_with_id) as mock_insert,
+            patch("lidl_tracker.ingest.db.insert_flyer") as mock_insert,
             patch("lidl_tracker.ingest.db.upsert_product_cards") as mock_upsert_cards,
         ):
+            mock_upload_json.side_effect = lambda *_: operations.append("r2_manifest")
+            mock_insert.side_effect = lambda record: (
+                operations.append("database_insert"),
+                _insert_with_id(record),
+            )[1]
             result = ingest_flyer(flyer, mock_client, now=NOW)
 
         assert result.skipped is False
@@ -96,9 +102,15 @@ class TestIngestNewFlyer:
         assert result.content_hash == PDF_HASH
         assert result.storage_key == STORAGE_KEY
         mock_upload.assert_called_once_with(STORAGE_KEY, PDF_BYTES)
-        mock_upload_json.assert_called_once()
+        assert mock_upload_json.call_count == 2
+        snapshot = mock_upload_json.call_args_list[0].args[1]
+        assert snapshot["schema_version"] == 1
+        assert snapshot["flyer"]["source_url"] == flyer.pdf_url
+        assert snapshot["flyer"]["content_hash"] == PDF_HASH
+        assert snapshot["acquisition"]["id"] == flyer.id
         mock_upsert_cards.assert_called_once()
         mock_insert.assert_called_once()
+        assert operations.index("r2_manifest") < operations.index("database_insert")
 
     def test_new_flyer_uses_deterministic_key(self, monkeypatch):
         """The same PDF bytes always produce the same storage key."""
@@ -156,7 +168,7 @@ class TestDuplicateFlyer:
         assert result.skipped is True
         mock_upload.assert_not_called()
         mock_insert.assert_not_called()
-        mock_upload_json.assert_called_once()
+        assert mock_upload_json.call_count == 2
         mock_upsert_cards.assert_called_once()
         mock_update_slug.assert_called_once()
 
@@ -172,6 +184,7 @@ class TestDuplicateFlyer:
             patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
             patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload,
+            patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
             patch("lidl_tracker.ingest.r2.upload_json"),
             patch("lidl_tracker.ingest.db.insert_flyer") as mock_insert,
             patch("lidl_tracker.ingest.db.upsert_product_cards"),
@@ -212,10 +225,34 @@ class TestFailureHandling:
             patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
             patch("lidl_tracker.ingest.r2.upload_pdf"),
             patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
+            patch("lidl_tracker.ingest.r2.upload_json"),
             patch("lidl_tracker.ingest.db.insert_flyer", side_effect=Exception("DB down")),
         ):
             with pytest.raises(Exception, match="DB down"):
                 ingest_flyer(flyer, mock_client, now=NOW)
+
+    def test_db_lookup_failure_still_persists_recovery_data_to_r2(self):
+        flyer = _make_flyer()
+        mock_client = MagicMock()
+        mock_client._client.stream.return_value.__enter__.return_value.read.return_value = PDF_BYTES
+
+        with (
+            patch("lidl_tracker.ingest.db.get_flyer_by_hash", side_effect=Exception("DB down")),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
+            patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload_pdf,
+            patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
+            patch("lidl_tracker.ingest.r2.upload_json") as mock_upload_json,
+            patch("lidl_tracker.ingest.db.insert_flyer") as mock_insert,
+        ):
+            with pytest.raises(Exception, match="DB down"):
+                ingest_flyer(flyer, mock_client, now=NOW)
+
+        mock_upload_pdf.assert_called_once_with(STORAGE_KEY, PDF_BYTES)
+        mock_upload_json.assert_called_once()
+        snapshot = mock_upload_json.call_args.args[1]
+        assert snapshot["flyer"]["source_url"] == flyer.pdf_url
+        assert snapshot["content_hash"] == PDF_HASH
+        mock_insert.assert_not_called()
 
     def test_retry_after_db_failure_does_not_duplicate_r2(self):
         """On retry after a DB failure, R2 upload is still called (idempotent overwrite),
@@ -236,6 +273,7 @@ class TestFailureHandling:
             patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
             patch("lidl_tracker.ingest.r2.upload_pdf", side_effect=record_upload),
             patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
+            patch("lidl_tracker.ingest.r2.upload_json"),
             patch("lidl_tracker.ingest.db.insert_flyer", side_effect=Exception("DB down")),
         ):
             with pytest.raises(Exception, match="DB down"):
@@ -301,8 +339,11 @@ class TestExtractionPersistence:
         ):
             ingest_flyer(flyer, mock_client, now=NOW)
 
-        upload_key, payload = mock_upload_json.call_args.args
+        upload_key, payload = mock_upload_json.call_args_list[-1].args
         assert upload_key == "flyers/2025/07/" + PDF_HASH + ".cards.json"
+        assert payload["schema_version"] == 1
+        assert payload["flyer"]["category"] == flyer.category
+        assert payload["flyer"]["slug"]
         assert payload["content_hash"] == PDF_HASH
         assert payload["card_count"] == 1
         assert payload["cards"][0]["card_hash"]
@@ -326,7 +367,7 @@ class TestExtractionPersistence:
         ):
             ingest_flyer(flyer, mock_client, now=NOW)
 
-        upload_key, _ = mock_upload_json.call_args.args
+        upload_key, _ = mock_upload_json.call_args_list[-1].args
         assert upload_key == "flyers/2025/06/" + PDF_HASH + ".cards.json"
 
 

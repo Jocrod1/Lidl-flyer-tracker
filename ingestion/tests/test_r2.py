@@ -15,6 +15,8 @@ from lidl_tracker.storage.r2 import (
     extraction_key_for_pdf_key,
     object_key_for_hash,
     object_exists,
+    download_object,
+    list_objects,
     sha256_bytes,
     sha256_file,
     upload_object,
@@ -173,6 +175,24 @@ class TestUploadJson:
         assert kwargs["Bucket"] == "test-bucket"
         assert kwargs["Key"] == "flyers/2025/07/abc123.cards.json"
         assert kwargs["ContentType"] == "application/json; charset=utf-8"
+        mock_client.head_object.assert_called_once_with(
+            Bucket="test-bucket",
+            Key="flyers/2025/07/abc123.cards.json",
+        )
+
+    def test_upload_json_fails_if_object_is_not_present_after_put(self, monkeypatch):
+        from botocore.exceptions import ClientError
+
+        for key, value in R2_ENV.items():
+            monkeypatch.setenv(key, value)
+        error = ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+        mock_client = MagicMock()
+        mock_client.head_object.side_effect = error
+        with patch("lidl_tracker.storage.r2._client", return_value=mock_client):
+            with pytest.raises(RuntimeError, match="R2 JSON upload verification failed"):
+                upload_json("flyers/2025/07/abc123.cards.json", {"cards": []})
+
+        mock_client.put_object.assert_called_once()
 
 
 class TestUploadObject:
@@ -187,3 +207,36 @@ class TestUploadObject:
             upload_object("k", b"d", "image/png")
 
         mock_client.put_object.assert_called_once()
+
+
+class TestDownloadAndListObjects:
+    def test_download_object_reads_and_closes_body(self, monkeypatch):
+        for key, value in R2_ENV.items():
+            monkeypatch.setenv(key, value)
+
+        body = MagicMock()
+        body.read.return_value = b'{"ok": true}'
+        mock_client = MagicMock()
+        mock_client.get_object.return_value = {"Body": body}
+        with patch("lidl_tracker.storage.r2._client", return_value=mock_client):
+            assert download_object("flyers/a.cards.json") == b'{"ok": true}'
+
+        body.close.assert_called_once()
+
+    def test_list_objects_yields_keys_from_all_pages(self, monkeypatch):
+        for key, value in R2_ENV.items():
+            monkeypatch.setenv(key, value)
+
+        paginator = MagicMock()
+        paginator.paginate.return_value = [
+            {"Contents": [{"Key": "flyers/a.cards.json"}]},
+            {"Contents": [{"Key": "flyers/b.cards.json"}]},
+        ]
+        mock_client = MagicMock()
+        mock_client.get_paginator.return_value = paginator
+        with patch("lidl_tracker.storage.r2._client", return_value=mock_client):
+            assert list(list_objects("flyers/")) == [
+                "flyers/a.cards.json",
+                "flyers/b.cards.json",
+            ]
+        paginator.paginate.assert_called_once_with(Bucket="test-bucket", Prefix="flyers/")

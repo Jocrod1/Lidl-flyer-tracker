@@ -39,7 +39,7 @@ import json
 import logging
 import tempfile
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from .acquisition import FlyerMeta, LidlLeafletClient
 from .cards import extract_document_cards
@@ -120,10 +120,81 @@ def _card_hash(card: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _flyer_snapshot_payload(
+    flyer_record: FlyerRecord,
+    acquisition_metadata: dict[str, Any],
+    *,
+    cards: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build the versioned R2 snapshot without relying on a database ID."""
+    return {
+        "schema_version": 1,
+        "flyer": {
+            "source_url": flyer_record.source_url,
+            "storage_key": flyer_record.storage_key,
+            "category": flyer_record.category,
+            "name": flyer_record.name,
+            "start_date": flyer_record.start_date,
+            "end_date": flyer_record.end_date,
+            "content_hash": flyer_record.content_hash,
+            "downloaded_at": (
+                flyer_record.downloaded_at.isoformat()
+                if flyer_record.downloaded_at is not None
+                else None
+            ),
+            "status": flyer_record.status.value,
+            "slug": flyer_record.slug,
+        },
+        "acquisition": acquisition_metadata,
+        # Retained for compatibility with existing extraction JSON readers.
+        "flyer_id": flyer_record.id,
+        "content_hash": flyer_record.content_hash,
+        "pdf_storage_key": flyer_record.storage_key,
+        "card_count": len(cards) if cards is not None else 0,
+        "cards": cards or [],
+    }
+
+
+def _upload_flyer_snapshot(flyer_record: FlyerRecord, flyer: FlyerMeta) -> str:
+    extraction_key = r2.extraction_key_for_pdf_key(flyer_record.storage_key)
+    r2.upload_json(extraction_key, _flyer_snapshot_payload(flyer_record, flyer.to_dict()))
+    return extraction_key
+
+
+def _new_flyer_record(
+    flyer: FlyerMeta,
+    storage_key: str,
+    content_hash: str,
+    downloaded_at: dt.datetime,
+) -> FlyerRecord:
+    return FlyerRecord(
+        source_url=flyer.pdf_url,
+        storage_key=storage_key,
+        category=flyer.category,
+        name=flyer.name,
+        start_date=flyer.start_date,
+        end_date=flyer.end_date,
+        content_hash=content_hash,
+        downloaded_at=downloaded_at,
+        status=FlyerStatus.STORED,
+        slug=flyer_slug(flyer.category, flyer.name, flyer.start_date, content_hash),
+    )
+
+
+def _ensure_pdf_in_r2(storage_key: str, content_hash: str, pdf_bytes: bytes) -> bool:
+    pdf_already_exists = r2.object_exists(storage_key)
+    if not pdf_already_exists:
+        r2.upload_pdf(storage_key, pdf_bytes)
+        if not r2.verify_upload(storage_key, content_hash):
+            raise RuntimeError(f"R2 upload verification failed for {storage_key}")
+    return pdf_already_exists
+
+
 def _persist_extraction(
     flyer_record: FlyerRecord,
     content_hash: str,
     pdf_bytes: bytes,
+    acquisition_metadata: dict[str, Any],
 ) -> tuple[int, int, str]:
     cards = _extract_cards_from_pdf_bytes(pdf_bytes)
     cards_with_hash = []
@@ -162,13 +233,11 @@ def _persist_extraction(
             cards_with_hash.append({**card, "card_hash": _card_hash(card)})
 
     extraction_key = r2.extraction_key_for_pdf_key(flyer_record.storage_key)
-    payload = {
-        "flyer_id": flyer_record.id,
-        "content_hash": content_hash,
-        "pdf_storage_key": flyer_record.storage_key,
-        "card_count": len(cards_with_hash),
-        "cards": cards_with_hash,
-    }
+    payload = _flyer_snapshot_payload(
+        flyer_record,
+        acquisition_metadata,
+        cards=cards_with_hash,
+    )
     r2.upload_json(extraction_key, payload)
 
     if flyer_record.id is None:
@@ -205,23 +274,41 @@ def ingest_flyer(
     logger.info("content_hash=%s  storage_key=%s", content_hash, storage_key)
 
     # --- Step 3: idempotency check ---
-    existing = db.get_flyer_by_hash(content_hash)
+    try:
+        existing = db.get_flyer_by_hash(content_hash)
+    except Exception:
+        logger.exception("database lookup failed; persisting recovery data to R2")
+        record = _new_flyer_record(flyer, storage_key, content_hash, downloaded_at)
+        try:
+            _ensure_pdf_in_r2(storage_key, content_hash, pdf_bytes)
+            _upload_flyer_snapshot(record, flyer)
+        except Exception:
+            logger.exception("failed to persist R2 recovery data after database lookup failure")
+            raise
+        raise
     if existing is not None:
         logger.info("already ingested (hash match): %s", flyer.name)
         flyer_record = existing
         storage_key = flyer_record.storage_key
+        slug_to_backfill = None
         if flyer_record.slug is None:
             # Legacy row ingested before slugs existed — backfill it now.
-            slug = flyer_slug(flyer_record.category, flyer_record.name, flyer_record.start_date, content_hash)
-            db.update_flyer_slug(content_hash, slug)
-            flyer_record.slug = slug
+            slug_to_backfill = flyer_slug(
+                flyer_record.category,
+                flyer_record.name,
+                flyer_record.start_date,
+                content_hash,
+            )
+            flyer_record.slug = slug_to_backfill
         # If R2 object is somehow missing, re-upload it.
-        pdf_already_exists = r2.object_exists(storage_key)
+        pdf_already_exists = _ensure_pdf_in_r2(storage_key, content_hash, pdf_bytes)
         if not pdf_already_exists:
-            logger.warning("DB record exists but R2 object missing — re-uploading")
-            r2.upload_pdf(storage_key, pdf_bytes)
+            logger.warning("DB record exists but R2 object missing — re-uploaded")
+        _upload_flyer_snapshot(flyer_record, flyer)
+        if slug_to_backfill is not None:
+            db.update_flyer_slug(content_hash, slug_to_backfill)
         extracted_cards, persisted_cards, extraction_key = _persist_extraction(
-            flyer_record, content_hash, pdf_bytes
+            flyer_record, content_hash, pdf_bytes, flyer.to_dict()
         )
         logger.info(
             "ingestion_result slug=%s pdf_sha256=%s flyer=%s pdf=%s extracted_cards=%d persisted_cards=%d extraction_json_key=%s",
@@ -247,29 +334,16 @@ def ingest_flyer(
         )
 
     # --- Step 4: upload to R2 ---
-    pdf_already_exists = r2.object_exists(storage_key)
     logger.info("uploading to R2: %s", storage_key)
-    r2.upload_pdf(storage_key, pdf_bytes)
-    if not r2.verify_upload(storage_key, content_hash):
-        raise RuntimeError(f"R2 upload verification failed for {storage_key}")
+    pdf_already_exists = _ensure_pdf_in_r2(storage_key, content_hash, pdf_bytes)
 
     # --- Step 5: insert DB record ---
-    record = FlyerRecord(
-        source_url=flyer.pdf_url,
-        storage_key=storage_key,
-        category=flyer.category,
-        name=flyer.name,
-        start_date=flyer.start_date,
-        end_date=flyer.end_date,
-        content_hash=content_hash,
-        downloaded_at=downloaded_at,
-        status=FlyerStatus.STORED,
-        slug=flyer_slug(flyer.category, flyer.name, flyer.start_date, content_hash),
-    )
+    record = _new_flyer_record(flyer, storage_key, content_hash, downloaded_at)
+    _upload_flyer_snapshot(record, flyer)
     flyer_record = db.insert_flyer(record)
     logger.info("ingested flyer: %s (id=%s)", flyer.name, flyer_record.id)
     extracted_cards, persisted_cards, extraction_key = _persist_extraction(
-        flyer_record, content_hash, pdf_bytes
+        flyer_record, content_hash, pdf_bytes, flyer.to_dict()
     )
     logger.info(
         "ingestion_result slug=%s pdf_sha256=%s flyer=%s pdf=%s extracted_cards=%d persisted_cards=%d extraction_json_key=%s",
