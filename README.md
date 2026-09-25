@@ -116,6 +116,11 @@ preserves any existing card JSON while adding database metadata.
 If PostgreSQL is unavailable during ingestion's initial lookup, ingestion
 preserves the PDF and metadata manifest in R2 before reporting the database
 failure.
+When PostgreSQL has no matching row, ingestion also searches R2 manifests by
+content hash. If it finds a matching manifest, it reuses that manifest's PDF
+key instead of storing another copy (even if the original PDF is in a
+different year/month path), then creates the missing database row and
+regenerates product cards.
 Restore does not delete existing rows; it skips existing flyers and refreshes
 their product cards, so use an empty or intentionally selected database for a
 full rebuild. Legacy extraction JSON cannot be used for database recovery

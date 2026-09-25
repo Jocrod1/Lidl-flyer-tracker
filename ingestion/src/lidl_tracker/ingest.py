@@ -8,7 +8,7 @@ Orchestrates the full flow:
         ↓
     Calculate SHA-256
         ↓
-    Idempotency check (is hash already in DB?)
+    Idempotency check (is hash already in DB or represented by an R2 manifest?)
         ↓ (only if new)
     Upload PDF to Cloudflare R2
         ↓
@@ -23,9 +23,9 @@ If the R2 upload succeeds but the DB insert fails, the next run will:
   1. Download the PDF again.
   2. Hash it — same hash.
   3. Find no DB record for that hash.
-  4. Attempt R2 upload — R2 already has the object (same key), so it is
-     simply overwritten (idempotent for identical content).
-  5. Insert the DB record.
+  4. Find the matching R2 manifest by content hash and reuse its PDF key,
+     or upload the PDF and create a manifest if none exists.
+  5. Insert the DB record and regenerate product cards.
 
 If the DB record exists but the R2 object is missing, ``ingest_flyer``
 detects that and re-uploads before updating the status.
@@ -190,6 +190,44 @@ def _ensure_pdf_in_r2(storage_key: str, content_hash: str, pdf_bytes: bytes) -> 
     return pdf_already_exists
 
 
+def _find_r2_snapshot(content_hash: str) -> str | None:
+    manifest_name = f"{content_hash}.cards.json"
+    keys = sorted(
+        key
+        for key in r2.list_objects("flyers/")
+        if key.rsplit("/", 1)[-1] == manifest_name
+    )
+    if not keys:
+        return None
+
+    key = keys[-1]
+    try:
+        manifest = json.loads(r2.download_object(key).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid R2 extraction manifest {key}: {exc}") from exc
+    if not isinstance(manifest, dict) or manifest.get("content_hash") != content_hash:
+        raise ValueError(f"R2 extraction manifest {key} has an invalid content_hash")
+    schema_version = manifest.get("schema_version")
+    if schema_version is not None and schema_version != 1:
+        raise ValueError(f"R2 extraction manifest {key} has an unsupported schema_version")
+
+    expected_pdf_key = f"{key[:-len('.cards.json')]}.pdf"
+    snapshot_pdf_key = manifest.get("pdf_storage_key")
+    if schema_version == 1 and snapshot_pdf_key is None:
+        raise ValueError(f"R2 extraction manifest {key} is missing pdf_storage_key")
+    if snapshot_pdf_key is not None and snapshot_pdf_key != expected_pdf_key:
+        raise ValueError(f"R2 extraction manifest {key} references a different PDF")
+    flyer = manifest.get("flyer")
+    if schema_version == 1 and not isinstance(flyer, dict):
+        raise ValueError(f"R2 extraction manifest {key} is missing flyer metadata")
+    if flyer is not None:
+        if not isinstance(flyer, dict):
+            raise ValueError(f"R2 extraction manifest {key} has invalid flyer metadata")
+        if flyer.get("content_hash") != content_hash or flyer.get("storage_key") != expected_pdf_key:
+            raise ValueError(f"R2 extraction manifest {key} has inconsistent flyer metadata")
+    return expected_pdf_key
+
+
 def _persist_extraction(
     flyer_record: FlyerRecord,
     content_hash: str,
@@ -280,8 +318,13 @@ def ingest_flyer(
         logger.exception("database lookup failed; persisting recovery data to R2")
         record = _new_flyer_record(flyer, storage_key, content_hash, downloaded_at)
         try:
-            _ensure_pdf_in_r2(storage_key, content_hash, pdf_bytes)
-            _upload_flyer_snapshot(record, flyer)
+            snapshot = _find_r2_snapshot(content_hash)
+            if snapshot is not None:
+                record.storage_key = snapshot
+                logger.info("R2 manifest already exists for content_hash=%s", content_hash)
+            _ensure_pdf_in_r2(record.storage_key, content_hash, pdf_bytes)
+            if snapshot is None:
+                _upload_flyer_snapshot(record, flyer)
         except Exception:
             logger.exception("failed to persist R2 recovery data after database lookup failure")
             raise
@@ -333,13 +376,18 @@ def ingest_flyer(
             extraction_key=extraction_key,
         )
 
-    # --- Step 4: upload to R2 ---
+    # --- Step 4: check R2 snapshot and upload the PDF if needed ---
+    snapshot = _find_r2_snapshot(content_hash)
+    if snapshot is not None:
+        storage_key = snapshot
+        logger.info("R2 manifest already exists for content_hash=%s", content_hash)
     logger.info("uploading to R2: %s", storage_key)
     pdf_already_exists = _ensure_pdf_in_r2(storage_key, content_hash, pdf_bytes)
 
     # --- Step 5: insert DB record ---
     record = _new_flyer_record(flyer, storage_key, content_hash, downloaded_at)
-    _upload_flyer_snapshot(record, flyer)
+    if snapshot is None:
+        _upload_flyer_snapshot(record, flyer)
     flyer_record = db.insert_flyer(record)
     logger.info("ingested flyer: %s (id=%s)", flyer.name, flyer_record.id)
     extracted_cards, persisted_cards, extraction_key = _persist_extraction(
