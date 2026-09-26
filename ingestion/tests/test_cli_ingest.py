@@ -50,3 +50,23 @@ def test_cli_reports_per_flyer_pipeline_details(capsys):
     assert "extracted_cards=12" in out
     assert "persisted_upserted_cards=12" in out
     assert "extraction_json_key=flyers/2026/08/hash.cards.json" in out
+
+
+def test_cli_counts_ingestion_errors_and_returns_failure(capsys):
+    result = SimpleNamespace(
+        flyer_meta=SimpleNamespace(name="Folleto"),
+        status="FAILED",
+        skipped=False,
+        error="R2 snapshot listing failed",
+    )
+    with (
+        patch("lidl_tracker.cli_ingest.db.apply_migrations"),
+        patch("lidl_tracker.cli_ingest.db.backfill_flyer_slugs", return_value=0),
+        patch("lidl_tracker.cli_ingest.run_ingestion", return_value=[result]),
+    ):
+        exit_code = cli_ingest.main(["--migrate"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "failed   : 1" in out
+    assert "[FAIL]    Folleto: R2 snapshot listing failed" in out

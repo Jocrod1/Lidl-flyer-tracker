@@ -24,6 +24,11 @@ python -m lidl_tracker.cli_acquire --list
 python -m lidl_tracker.cli_acquire --download-all
 python -m lidl_tracker.cli_ingest --slug folleto-alimentacion-17-8-17-8-26-23-8-26-a07bd0
 python -m lidl_tracker.cli_ingest --slug folleto-alimentacion-17-8-17-8-26-23-8-26-a07bd0,folleto-bazar-17-8-17-8-26-23-8-26-e0c443
+# Validate R2 snapshots/PDFs, then rebuild flyer and product-card rows:
+python -m lidl_tracker.cli_snapshot --dry-run
+python -m lidl_tracker.cli_snapshot
+python -m lidl_tracker.cli_restore --dry-run
+python -m lidl_tracker.cli_restore --migrate
 # GitHub Actions: run the "Lidl Flyer Ingest" workflow manually and enter
 # one slug, or comma-separated slugs, in its optional "slug" input.
 
@@ -99,6 +104,28 @@ Each card keeps `raw_text`, `page`, `bbox`, `parser_version`, `warnings`
 and `notes`. Each PDF is stored with a `.meta.json` sidecar holding the API
 metadata, `downloaded_at` and `content_hash`, so flyers can be reprocessed
 as the parser improves.
+
+R2 extraction JSON uses a versioned manifest that includes the metadata
+needed to recreate each flyer database row. PostgreSQL IDs are generated
+again during recovery; product cards, including their calculated page and
+bbox, are regenerated from the stored PDF. Run `cli_restore --dry-run` to
+validate manifests and PDF hashes before running `cli_restore --migrate`.
+While PostgreSQL is still available, run `cli_snapshot --dry-run` and then
+`cli_snapshot` to backfill versioned manifests for existing flyers; this
+preserves any existing card JSON while adding database metadata.
+If PostgreSQL is unavailable during ingestion's initial lookup, ingestion
+preserves the PDF and metadata manifest in R2 before reporting the database
+failure.
+When PostgreSQL has no matching row, ingestion also searches R2 manifests by
+content hash. If it finds a matching manifest, it reuses that manifest's PDF
+key instead of storing another copy (even if the original PDF is in a
+different year/month path), then creates the missing database row and
+regenerates product cards.
+Restore does not delete existing rows; it skips existing flyers and refreshes
+their product cards, so use an empty or intentionally selected database for a
+full rebuild. Legacy extraction JSON cannot be used for database recovery
+until it has been backfilled from the still-available database; unsupported
+manifests are reported as errors.
 
 ## Not implemented yet (deliberately)
 
