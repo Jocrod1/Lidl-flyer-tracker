@@ -2,7 +2,7 @@
 
     python -m lidl_tracker.cli_watch --query "queso en salmuera" --to me@example.com
 
-Designed to be invoked by a scheduler (see docs/scheduling.md) every Sunday.
+Designed to be invoked periodically by a scheduler (see docs/scheduling.md).
 It is safe to run more than once:
 
   - flyer downloads are idempotent (acquisition.py already skips existing files)
@@ -57,7 +57,8 @@ def already_notified(state: dict[str, Any], flyer_id: str, query_key: str) -> bo
 
 
 def mark_notified(state: dict[str, Any], flyer_id: str, query_key: str) -> None:
-    state["notified"].append([flyer_id, query_key])
+    if not already_notified(state, flyer_id, query_key):
+        state["notified"].append([flyer_id, query_key])
 
 
 def extract_cards_cached(pdf_path: Path, flyer_id: str) -> list[dict[str, Any]]:

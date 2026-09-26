@@ -1,7 +1,7 @@
 @echo off
 REM Loads SMTP credentials from data\config\smtp.env (if present) and runs
-REM the weekly product watch. Intended to be invoked by Windows Task
-REM Scheduler every Sunday - see docs\scheduling.md.
+REM the product watch. It can be run manually or invoked by Windows Task
+REM Scheduler; the GitHub Actions schedule is documented in docs\scheduling.md.
 setlocal enabledelayedexpansion
 
 set "ROOT=%~dp0.."

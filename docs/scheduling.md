@@ -1,24 +1,50 @@
-# Scheduling the weekly product watch
+# Scheduling the product watch
 
-## What runs
+## GitHub Actions schedule
 
-`tools/run_watch.bat` -> `python -m lidl_tracker.cli_watch --query "queso en
-salmuera" --to <email>`.
+The **Lidl Flyer Watch** workflow runs at 08:00 and 18:00 UTC on Sundays and
+Mondays (four checks per week). GitHub Actions cron uses UTC; these times are
+approximately 09:00/19:00 in mainland Spain during winter and 10:00/20:00
+during summer. GitHub may delay scheduled runs under load.
 
-Each run:
+The multiple checks are an intentional, limited strategy based on observed
+behavior: the new flyer has sometimes appeared between Sunday and Monday.
+Lidl's publication timing is not known or guaranteed to fall in that window;
+the schedule is not a business-logic assumption. The four checks recur each
+week, and `workflow_dispatch` remains available for manual runs whenever
+needed. This is scheduled polling, not hourly polling or a continuous retry
+loop.
 
-1. Discovers currently advertised flyers (both current and next week).
-2. Downloads any new PDF (skipped if already present, per `acquisition.py`).
-3. Extracts product cards, cached per flyer id (`data/cache/<flyer-id>.json`)
-   so a flyer is only ever parsed once, even across many weekly runs.
-4. Searches for the query using normalized substring / all-words matching
-   (`search.py`) - no LLM.
-5. Sends one email per (flyer, query) the first time a match is found,
-   tracked in `data/state/watch_state.json` so re-running is a no-op.
+Each run discovers the flyers currently advertised by Lidl's API, downloads
+any missing PDFs, and extracts product cards using a cache per flyer ID. It
+searches those cards for the configured query. It does not infer when a new
+flyer should be published or compare against a hard-coded publication window:
+whenever Lidl advertises a flyer, a later scheduled or manual run can discover
+and search it.
 
-If `data/config/smtp.env` is missing or incomplete, the email is printed to
-`data/watch.log` instead of sent (dry-run) - safe to leave misconfigured
-during setup.
+Notifications are deduplicated by `(flyer ID, normalized query)` in
+`data/state/watch_state.json`. A pair is recorded after the email attempt, and
+the workflow commits the state so subsequent scheduled or manual runs skip
+that notification. If there is no match, the run exits normally without
+sending an email. Repeated runs are intentional and must remain idempotent:
+PDF downloads are reused, extracted cards are cached, and an already-notified
+pair is not emailed again. The workflow's final state-commit step does nothing
+when the state file is unchanged.
+
+## Local runs
+
+Run the same watcher directly with:
+
+```text
+python -m lidl_tracker.cli_watch --query "queso en salmuera" --to <email>
+```
+
+`tools/run_watch.bat` is a Windows convenience wrapper that loads local SMTP
+settings and logs output; it can be run manually or registered with Windows
+Task Scheduler independently of the GitHub Actions schedule.
+
+If SMTP is missing or incomplete, the email is printed as a dry run rather
+than sent.
 
 ## One-time setup
 
@@ -31,7 +57,9 @@ during setup.
    For Gmail, `LIDL_SMTP_PASSWORD` must be an App Password (2FA required),
    not the account password.
 
-2. Register the Sunday task (run once, from an elevated or normal prompt):
+2. Optionally register a local Windows Task Scheduler task (run once, from an
+   elevated or normal prompt). This is separate from the GitHub Actions
+   schedule:
 
    ```
    schtasks /create /tn "LidlFlyerWatch" ^
