@@ -17,5 +17,6 @@ set PYTHONIOENCODING=utf-8
 
 "%ROOT%\.venv\Scripts\python.exe" -m lidl_tracker.cli_watch ^
     --query "queso en salmuera" ^
+    --query "Queso Cottage" ^
     --to "%LIDL_WATCH_TO%" ^
     >> "%ROOT%\data\watch.log" 2>&1

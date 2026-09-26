@@ -17,10 +17,11 @@ loop.
 
 Each run discovers the flyers currently advertised by Lidl's API, downloads
 any missing PDFs, and extracts product cards using a cache per flyer ID. It
-searches those cards for the configured query. It does not infer when a new
-flyer should be published or compare against a hard-coded publication window:
-whenever Lidl advertises a flyer, a later scheduled or manual run can discover
-and search it.
+searches those cards for **queso en salmuera** and **Queso Cottage**. It does
+not infer when a new flyer should be published or compare against a hard-coded
+publication window: whenever Lidl advertises a flyer, a later scheduled or
+manual run can discover and search it. The CLI accepts multiple `--query`
+options; all queries are searched against the same extracted cards.
 
 Notifications are deduplicated by `(flyer ID, normalized query)` in
 `data/state/watch_state.json`. A pair is recorded after the email attempt, and
@@ -36,7 +37,7 @@ when the state file is unchanged.
 Run the same watcher directly with:
 
 ```text
-python -m lidl_tracker.cli_watch --query "queso en salmuera" --to <email>
+python -m lidl_tracker.cli_watch --query "queso en salmuera" --query "Queso Cottage" --to <email>
 ```
 
 `tools/run_watch.bat` is a Windows convenience wrapper that loads local SMTP

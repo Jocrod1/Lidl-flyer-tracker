@@ -38,6 +38,7 @@ jobs:
         run: |
           python -m lidl_tracker.cli_watch \
             --query "queso en salmuera" \
+            --query "Queso Cottage" \
             --to "${{ secrets.LIDL_WATCH_TO }}"
 
       - name: Persist notification state
