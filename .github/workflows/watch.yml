@@ -2,9 +2,13 @@ name: Lidl Flyer Watch
 
 on:
   schedule:
-    # Sundays 08:00 UTC (~09:00-10:00 in Spain depending on DST).
-    # GitHub may delay scheduled runs slightly under load; that is fine here.
-    - cron: "0 8 * * 0"
+    # Lidl's publication timing is unknown; these four checks are a practical
+    # strategy based on observed behavior, not a guaranteed publication window.
+    # Repeated runs are intentional and safe because notifications are
+    # deduplicated by flyer ID and normalized query in committed watch state.
+    # All times are UTC (08:00/18:00 are ~09:00/19:00 in Spain in winter and
+    # ~10:00/20:00 in summer). GitHub may delay scheduled runs under load.
+    - cron: "0 8,18 * * 0,1"
   workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
 
 permissions:
@@ -34,6 +38,7 @@ jobs:
         run: |
           python -m lidl_tracker.cli_watch \
             --query "queso en salmuera" \
+            --query "Queso Cottage" \
             --to "${{ secrets.LIDL_WATCH_TO }}"
 
       - name: Persist notification state

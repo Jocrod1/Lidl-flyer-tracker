@@ -15,6 +15,12 @@ class TestWatchState:
         mark_notified(state, "flyer-1", "queso en salmuera")
         assert already_notified(state, "flyer-1", "queso en salmuera")
 
+    def test_marking_same_flyer_and_query_twice_keeps_one_entry(self):
+        state = {"notified": []}
+        mark_notified(state, "flyer-1", "queso en salmuera")
+        mark_notified(state, "flyer-1", "queso en salmuera")
+        assert state["notified"] == [["flyer-1", "queso en salmuera"]]
+
     def test_different_flyer_is_independent(self):
         state = {"notified": []}
         mark_notified(state, "flyer-1", "queso en salmuera")

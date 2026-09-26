@@ -1,8 +1,8 @@
 """Weekly product watcher.
 
-    python -m lidl_tracker.cli_watch --query "queso en salmuera" --to me@example.com
+    python -m lidl_tracker.cli_watch --query "queso en salmuera" --query "Queso Cottage" --to me@example.com
 
-Designed to be invoked by a scheduler (see docs/scheduling.md) every Sunday.
+Designed to be invoked periodically by a scheduler (see docs/scheduling.md).
 It is safe to run more than once:
 
   - flyer downloads are idempotent (acquisition.py already skips existing files)
@@ -57,7 +57,8 @@ def already_notified(state: dict[str, Any], flyer_id: str, query_key: str) -> bo
 
 
 def mark_notified(state: dict[str, Any], flyer_id: str, query_key: str) -> None:
-    state["notified"].append([flyer_id, query_key])
+    if not already_notified(state, flyer_id, query_key):
+        state["notified"].append([flyer_id, query_key])
 
 
 def extract_cards_cached(pdf_path: Path, flyer_id: str) -> list[dict[str, Any]]:
@@ -102,9 +103,16 @@ def format_email(
 
 
 def run(query: str, to_addr: str, force: bool = False) -> int:
+    """Run a watch for one query (kept for callers using the original API)."""
+    return run_queries([query], to_addr, force=force)
+
+
+def run_queries(queries: list[str], to_addr: str, force: bool = False) -> int:
+    """Search each discovered flyer for every query, extracting cards once."""
+    queries = list(dict.fromkeys(queries))
     state = load_state()
-    query_key = normalize_name(query)
-    found_any = False
+    query_keys = {query: normalize_name(query) for query in queries}
+    found_queries: set[str] = set()
 
     with LidlLeafletClient() as client:
         flyers = client.discover()
@@ -112,41 +120,57 @@ def run(query: str, to_addr: str, force: bool = False) -> int:
 
         for flyer in flyers:
             pdf_path, downloaded = client.download_pdf(flyer, RAW_DIR)
+            pending_queries = [
+                query
+                for query in queries
+                if force
+                or not already_notified(state, flyer.id, query_keys[query])
+            ]
 
-            if already_notified(state, flyer.id, query_key) and not force:
+            if not pending_queries:
                 print(f"skip (already notified) : {flyer.name}")
                 continue
 
             status = "downloaded" if downloaded else "cached"
             print(f"searching                : {flyer.name} ({status})")
             cards = extract_cards_cached(pdf_path, flyer.id)
-            hits = search_cards(cards, query)
 
-            if not hits:
-                continue
+            for query in pending_queries:
+                hits = search_cards(cards, query)
+                if not hits:
+                    continue
 
-            found_any = True
-            subject, body = format_email(
-                query,
-                flyer.name,
-                flyer.offer_start_date or "?",
-                flyer.offer_end_date or "?",
-                flyer.flyer_url,
-                hits,
-            )
-            sent = send_email(to_addr, subject, body)
-            print(f"  -> {len(hits)} match(es); email {'sent' if sent else 'dry-run'}")
-            mark_notified(state, flyer.id, query_key)
+                found_queries.add(query)
+                subject, body = format_email(
+                    query,
+                    flyer.name,
+                    flyer.offer_start_date or "?",
+                    flyer.offer_end_date or "?",
+                    flyer.flyer_url,
+                    hits,
+                )
+                sent = send_email(to_addr, subject, body)
+                print(
+                    f"  -> {len(hits)} match(es) for '{query}'; "
+                    f"email {'sent' if sent else 'dry-run'}"
+                )
+                mark_notified(state, flyer.id, query_keys[query])
 
     save_state(state)
-    if not found_any:
-        print(f"\nno flyer currently contains '{query}'")
+    for query in queries:
+        if query not in found_queries:
+            print(f"\nno flyer currently contains '{query}'")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Watch for a product in Lidl ES flyers")
-    parser.add_argument("--query", required=True, help='e.g. "queso en salmuera"')
+    parser.add_argument(
+        "--query",
+        required=True,
+        action="append",
+        help='product query; may be supplied more than once, e.g. "Queso Cottage"',
+    )
     parser.add_argument("--to", required=True, dest="to_addr", help="notification email")
     parser.add_argument(
         "--force",
@@ -154,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         help="re-check and re-notify even if this flyer was already processed",
     )
     args = parser.parse_args(argv)
-    return run(args.query, args.to_addr, force=args.force)
+    return run_queries(args.query, args.to_addr, force=args.force)
 
 
 if __name__ == "__main__":
