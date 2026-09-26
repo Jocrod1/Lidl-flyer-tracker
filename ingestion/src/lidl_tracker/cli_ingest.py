@@ -61,9 +61,10 @@ def main(argv: list[str] | None = None) -> int:
 
     results = run_ingestion(requested_slugs)
 
-    new = [r for r in results if not r.skipped]
+    failed = [r for r in results if r.status == FlyerStatus.FAILED]
+    new = [r for r in results if not r.skipped and r.status != FlyerStatus.FAILED]
     skipped = [r for r in results if r.skipped]
-    failed_count = sum(1 for r in results if r.status == FlyerStatus.FAILED)
+    failed_count = len(failed)
 
     print(f"\n{'─'*60}")
     print(f"  ingested : {len(new)}")
@@ -76,7 +77,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"            hash={r.content_hash[:16]}…  key={r.storage_key}")
     for r in skipped:
         print(f"  [SKIP]    {r.flyer_meta.name}")
+    for r in failed:
+        print(f"  [FAIL]    {r.flyer_meta.name}: {r.error}")
     for r in results:
+        if r.status == FlyerStatus.FAILED:
+            continue
         slug = getattr(r.flyer_meta, "slug", "")
         flyer_state = "existing" if r.flyer_existing else "new"
         pdf_state = "existing" if r.pdf_existing else "new"

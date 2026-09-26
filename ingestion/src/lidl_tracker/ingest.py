@@ -41,6 +41,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 
+from botocore.exceptions import ClientError
+
 from .acquisition import FlyerMeta, LidlLeafletClient
 from .cards import extract_document_cards
 from .models.flyer import FlyerRecord, FlyerStatus
@@ -65,6 +67,7 @@ class IngestionResult:
         "extracted_cards",
         "persisted_cards",
         "extraction_key",
+        "error",
     )
 
     def __init__(
@@ -80,6 +83,7 @@ class IngestionResult:
         extracted_cards: int = 0,
         persisted_cards: int = 0,
         extraction_key: str = "",
+        error: str = "",
     ) -> None:
         self.flyer_meta = flyer_meta
         self.status = status
@@ -91,6 +95,7 @@ class IngestionResult:
         self.extracted_cards = extracted_cards
         self.persisted_cards = persisted_cards
         self.extraction_key = extraction_key
+        self.error = error
 
     def __repr__(self) -> str:  # pragma: no cover
         return (
@@ -228,6 +233,20 @@ def _find_r2_snapshot(content_hash: str) -> str | None:
     return expected_pdf_key
 
 
+def _find_r2_snapshot_for_ingestion(content_hash: str) -> str | None:
+    try:
+        return _find_r2_snapshot(content_hash)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "NoSuchKey":
+            raise
+        logger.warning(
+            "R2 snapshot listing returned NoSuchKey; proceeding without snapshot lookup "
+            "for content_hash=%s",
+            content_hash,
+        )
+        return None
+
+
 def _persist_extraction(
     flyer_record: FlyerRecord,
     content_hash: str,
@@ -318,7 +337,7 @@ def ingest_flyer(
         logger.exception("database lookup failed; persisting recovery data to R2")
         record = _new_flyer_record(flyer, storage_key, content_hash, downloaded_at)
         try:
-            snapshot = _find_r2_snapshot(content_hash)
+            snapshot = _find_r2_snapshot_for_ingestion(content_hash)
             if snapshot is not None:
                 record.storage_key = snapshot
                 logger.info("R2 manifest already exists for content_hash=%s", content_hash)
@@ -377,7 +396,7 @@ def ingest_flyer(
         )
 
     # --- Step 4: check R2 snapshot and upload the PDF if needed ---
-    snapshot = _find_r2_snapshot(content_hash)
+    snapshot = _find_r2_snapshot_for_ingestion(content_hash)
     if snapshot is not None:
         storage_key = snapshot
         logger.info("R2 manifest already exists for content_hash=%s", content_hash)
@@ -438,8 +457,18 @@ def run_ingestion(slugs: Sequence[str] | None = None) -> list[IngestionResult]:
             try:
                 result = ingest_flyer(flyer, client)
                 results.append(result)
-            except Exception:
+            except Exception as exc:
                 logger.exception("failed to ingest flyer %s", flyer.name)
+                results.append(
+                    IngestionResult(
+                        flyer_meta=flyer,
+                        status=FlyerStatus.FAILED,
+                        skipped=False,
+                        storage_key="",
+                        content_hash="",
+                        error=str(exc),
+                    )
+                )
     return results
 
 

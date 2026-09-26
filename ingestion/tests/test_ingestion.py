@@ -9,6 +9,7 @@ import datetime as dt
 import json
 from unittest.mock import MagicMock, patch
 
+from botocore.exceptions import ClientError
 import pytest
 
 from lidl_tracker.acquisition import FlyerMeta
@@ -80,6 +81,31 @@ def no_r2_snapshots(monkeypatch):
 # ---------------------------------------------------------------------------
 
 class TestIngestNewFlyer:
+    def test_snapshot_list_no_such_key_does_not_block_ingestion(self):
+        flyer = _make_flyer()
+        mock_client = MagicMock()
+        mock_client._client.stream.return_value.__enter__.return_value.read.return_value = PDF_BYTES
+        list_error = ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."}},
+            "ListObjectsV2",
+        )
+
+        with (
+            patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.r2.list_objects", side_effect=list_error),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=False),
+            patch("lidl_tracker.ingest._extract_cards_from_pdf_bytes", return_value=[]),
+            patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload,
+            patch("lidl_tracker.ingest.r2.verify_upload", return_value=True),
+            patch("lidl_tracker.ingest.r2.upload_json"),
+            patch("lidl_tracker.ingest.db.insert_flyer", side_effect=_insert_with_id),
+            patch("lidl_tracker.ingest.db.upsert_product_cards"),
+        ):
+            result = ingest_flyer(flyer, mock_client, now=NOW)
+
+        assert result.status == FlyerStatus.STORED
+        mock_upload.assert_called_once_with(STORAGE_KEY, PDF_BYTES)
+
     def test_new_flyer_uploads_and_inserts(self, monkeypatch):
         flyer = _make_flyer()
         mock_client = MagicMock()
@@ -484,3 +510,26 @@ class TestSlugIngestion:
 
         assert seen == requested
         assert [r.flyer_meta.slug for r in results] == requested
+
+    def test_ingestion_errors_are_returned_as_failed_results(self):
+        flyer = _make_flyer()
+
+        class FakeClient:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def discover(self):
+                return [flyer]
+
+        with (
+            patch("lidl_tracker.ingest.LidlLeafletClient", return_value=FakeClient()),
+            patch("lidl_tracker.ingest.ingest_flyer", side_effect=RuntimeError("R2 unavailable")),
+        ):
+            results = run_ingestion()
+
+        assert len(results) == 1
+        assert results[0].status == FlyerStatus.FAILED
+        assert results[0].error == "R2 unavailable"
