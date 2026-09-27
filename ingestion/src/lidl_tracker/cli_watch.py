@@ -31,7 +31,7 @@ from .parsers import normalize_name
 from .pdf_extract import extract_all
 from .search import search_cards
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 RAW_DIR = Path(os.environ.get("LIDL_WATCH_RAW_DIR", ROOT / "data" / "raw"))
 CACHE_DIR = Path(os.environ.get("LIDL_WATCH_CACHE_DIR", ROOT / "data" / "cache"))
 STATE_PATH = Path(
