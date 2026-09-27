@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 from lidl_tracker import cli_watch
+
+
+def test_watch_state_defaults_to_repository_data_directory():
+    repository_root = Path(__file__).resolve().parents[2]
+
+    assert cli_watch.ROOT == repository_root
+    assert cli_watch.STATE_PATH == repository_root / "data" / "state" / "watch_state.json"
 
 
 def test_run_queries_searches_each_query_and_reuses_extracted_cards(
