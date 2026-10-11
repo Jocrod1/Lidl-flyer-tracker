@@ -8,7 +8,7 @@ Orchestrates the full flow:
         ↓
     Calculate SHA-256
         ↓
-    Idempotency check (is hash already in DB or represented by an R2 manifest?)
+    Idempotency check (is hash or source URL already in DB or represented by an R2 manifest?)
         ↓ (only if new)
     Upload PDF to Cloudflare R2
         ↓
@@ -333,6 +333,8 @@ def ingest_flyer(
     # --- Step 3: idempotency check ---
     try:
         existing = db.get_flyer_by_hash(content_hash)
+        if existing is None:
+            existing = db.get_flyer_by_url(flyer.pdf_url)
     except Exception:
         logger.exception("database lookup failed; persisting recovery data to R2")
         record = _new_flyer_record(flyer, storage_key, content_hash, downloaded_at)
@@ -348,8 +350,25 @@ def ingest_flyer(
             logger.exception("failed to persist R2 recovery data after database lookup failure")
             raise
         raise
+    if existing is not None and existing.content_hash != content_hash:
+        logger.warning(
+            "source URL already ingested with different content; preserving existing record "
+            "for %s (stored_content_hash=%s downloaded_content_hash=%s)",
+            flyer.pdf_url,
+            existing.content_hash,
+            content_hash,
+        )
+        return IngestionResult(
+            flyer_meta=flyer,
+            status=existing.status,
+            skipped=True,
+            storage_key=existing.storage_key,
+            content_hash=existing.content_hash,
+            flyer_existing=True,
+            pdf_existing=r2.object_exists(existing.storage_key),
+        )
     if existing is not None:
-        logger.info("already ingested (hash match): %s", flyer.name)
+        logger.info("already ingested (hash or source URL match): %s", flyer.name)
         flyer_record = existing
         storage_key = flyer_record.storage_key
         slug_to_backfill = None
