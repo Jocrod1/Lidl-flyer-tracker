@@ -76,6 +76,12 @@ def no_r2_snapshots(monkeypatch):
     monkeypatch.setattr("lidl_tracker.ingest.r2.list_objects", lambda prefix: iter(()))
 
 
+@pytest.fixture(autouse=True)
+def _no_existing_source_url():
+    with patch("lidl_tracker.ingest.db.get_flyer_by_url", return_value=None):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Ingestion: new flyer
 # ---------------------------------------------------------------------------
@@ -292,6 +298,34 @@ class TestDuplicateFlyer:
         assert result.skipped is True
         mock_upload.assert_called_once_with(STORAGE_KEY, PDF_BYTES)
         mock_insert.assert_not_called()
+
+    def test_duplicate_source_url_with_changed_content_is_skipped(self):
+        """A changed PDF at an existing URL must not violate the URL constraint."""
+        flyer = _make_flyer()
+        changed_pdf = b"%PDF-1.4 changed content"
+        changed_hash = sha256_bytes(changed_pdf)
+        mock_client = MagicMock()
+        mock_client._client.stream.return_value.__enter__.return_value.read.return_value = changed_pdf
+        existing = _make_existing_record()
+
+        with (
+            patch("lidl_tracker.ingest.db.get_flyer_by_hash", return_value=None),
+            patch("lidl_tracker.ingest.db.get_flyer_by_url", return_value=existing),
+            patch("lidl_tracker.ingest.r2.object_exists", return_value=True),
+            patch("lidl_tracker.ingest.r2.upload_pdf") as mock_upload,
+            patch("lidl_tracker.ingest.db.insert_flyer") as mock_insert,
+            patch("lidl_tracker.ingest._persist_extraction") as mock_extract,
+        ):
+            result = ingest_flyer(flyer, mock_client, now=NOW)
+
+        assert changed_hash != existing.content_hash
+        assert result.skipped is True
+        assert result.flyer_existing is True
+        assert result.content_hash == existing.content_hash
+        assert result.storage_key == existing.storage_key
+        mock_upload.assert_not_called()
+        mock_insert.assert_not_called()
+        mock_extract.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
