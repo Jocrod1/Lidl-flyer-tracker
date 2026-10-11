@@ -81,7 +81,49 @@ function getApiBaseUrl(): string {
   return baseUrl.replace(/\/+$/, "");
 }
 
-async function apiFetch<T>(path: string): Promise<T> {
+function isFlyerSummaryDTO(value: unknown): value is FlyerSummaryDTO {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const flyer = value as Record<string, unknown>;
+  return (
+    typeof flyer.id === "number" &&
+    Number.isInteger(flyer.id) &&
+    typeof flyer.slug === "string" &&
+    typeof flyer.name === "string" &&
+    typeof flyer.category === "string" &&
+    (typeof flyer.start_date === "string" || flyer.start_date === null) &&
+    (typeof flyer.end_date === "string" || flyer.end_date === null) &&
+    typeof flyer.status === "string" &&
+    typeof flyer.product_count === "number" &&
+    Number.isInteger(flyer.product_count) &&
+    flyer.product_count >= 0
+  );
+}
+
+function isFlyerListResponseDTO(value: unknown): value is FlyerListResponseDTO {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const page = value as Record<string, unknown>;
+  return (
+    Array.isArray(page.items) &&
+    page.items.every(isFlyerSummaryDTO) &&
+    typeof page.total === "number" &&
+    Number.isInteger(page.total) &&
+    typeof page.page === "number" &&
+    Number.isInteger(page.page) &&
+    typeof page.page_size === "number" &&
+    Number.isInteger(page.page_size) &&
+    page.total >= 0 &&
+    page.page >= 1 &&
+    page.page_size >= 1
+  );
+}
+
+async function apiFetch(path: string): Promise<unknown> {
   const baseUrl = getApiBaseUrl();
   const url = `${baseUrl}${path}`;
 
@@ -111,7 +153,11 @@ async function apiFetch<T>(path: string): Promise<T> {
     );
   }
 
-  return (await response.json()) as T;
+  try {
+    return await response.json();
+  } catch {
+    throw new FlyerApiError(`Flyer API returned invalid JSON: ${path}`);
+  }
 }
 
 export interface FlyerListParams {
@@ -130,13 +176,21 @@ export async function fetchFlyerList(
   if (params.year !== undefined) search.set("year", String(params.year));
 
   const query = search.toString();
-  return apiFetch<FlyerListResponseDTO>(`/v1/flyers${query ? `?${query}` : ""}`);
+  const response = await apiFetch(`/v1/flyers${query ? `?${query}` : ""}`);
+  if (!isFlyerListResponseDTO(response)) {
+    throw new FlyerApiError("Flyer API returned an invalid flyer list response.");
+  }
+  return response;
 }
 
 /** `GET /v1/flyers/{slug}` — throws `FlyerNotFoundError` on a 404 response. */
 export async function fetchFlyerBySlug(slug: string): Promise<FlyerSummaryDTO> {
   try {
-    return await apiFetch<FlyerSummaryDTO>(`/v1/flyers/${encodeURIComponent(slug)}`);
+    const response = await apiFetch(`/v1/flyers/${encodeURIComponent(slug)}`);
+    if (!isFlyerSummaryDTO(response)) {
+      throw new FlyerApiError("Flyer API returned an invalid flyer response.");
+    }
+    return response;
   } catch (error) {
     if (error instanceof FlyerApiError && error.status === 404) {
       throw new FlyerNotFoundError(slug);

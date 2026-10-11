@@ -1,13 +1,11 @@
 import type { FlyerArchiveItem } from "./types";
 
 /**
- * Local mock dataset standing in for the ingestion backend.
+ * Local mock dataset retained for isolated UI prototyping and tests.
  *
- * Replace `getFlyers()` with a real fetch later — the UI only depends on the
- * `FlyerArchiveItem` shape and never fetches anything itself. `id` follows the
- * same `flyer-<year>-w<week>` convention used by `ProductAppearance.flyerId`
- * in `lib/products`, so the two datasets stay linkable once a real backend
- * joins them.
+ * The flyer routes use the API-backed accessors from `api-flyers.ts`.
+ * `id` follows the `flyer-<year>-w<week>` convention used by
+ * `ProductAppearance.flyerId` in `lib/products`.
  *
  * Ordered most recent first; `FLYERS[0]` is treated as the current flyer.
  */

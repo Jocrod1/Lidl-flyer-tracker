@@ -1,25 +1,23 @@
 /**
- * Flyer domain types.
- *
- * Mirrors the shape we expect the ingestion backend to eventually expose for
- * the Flyer Archive, so swapping `getFlyers()`/`getFlyer()` for a real fetch
- * later should not require touching the presentation components.
+ * Frontend view model for a flyer. The API uses a different, snake_case
+ * response contract; `mapper.ts` converts it here so presentation components
+ * remain independent of transport details.
  */
 
 export interface FlyerArchiveItem {
-  /** Stable identifier from the ingestion database. */
+  /** Stable identifier converted to a string from the API's integer id. */
   id: string;
   /** URL-safe identifier used for /flyers/[slug]. */
   slug: string;
   title: string;
-  /** ISO date (YYYY-MM-DD) the flyer went live. */
+  /** ISO date (YYYY-MM-DD) the flyer went live, or empty when absent. */
   dateFrom: string;
-  /** ISO date (YYYY-MM-DD) the flyer expires. */
+  /** ISO date (YYYY-MM-DD) the flyer expires, or empty when absent. */
   dateTo: string;
   /** Number of products captured from this flyer. */
   productCount: number;
-  /** Reference to flyer cover artwork. Not a remote image — see `FlyerCover`. */
+  /** Generated tint placeholder; the API does not currently provide artwork. */
   coverImage: string;
-  /** Whether this is the most recent flyer in the archive. */
+  /** Whether this is the first flyer in the API's newest-first list. */
   isCurrent?: boolean;
 }

@@ -64,12 +64,45 @@ describe("fetchFlyerList", () => {
   });
 
   it("returns the parsed response body on success", async () => {
-    const body = { items: [{ id: 1 }], total: 1, page: 1, page_size: 20 };
+    const body = {
+      items: [
+        {
+          id: 1,
+          slug: "flyer-1",
+          name: "Flyer One",
+          category: "ALIMENTACION",
+          start_date: "2026-08-17",
+          end_date: "2026-08-23",
+          status: "STORED",
+          product_count: 10,
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
 
     const result = await fetchFlyerList();
 
     expect(result).toEqual(body);
+  });
+
+  it("rejects a response that does not match the flyer list schema", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({ items: [{ id: 1 }], total: 1, page: 1, page_size: 20 }),
+      ),
+    );
+
+    await expect(fetchFlyerList()).rejects.toThrow("invalid flyer list response");
+  });
+
+  it("rejects malformed JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{")));
+
+    await expect(fetchFlyerList()).rejects.toThrow("invalid JSON");
   });
 
   it("throws FlyerApiError on a non-2xx response", async () => {

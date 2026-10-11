@@ -16,7 +16,6 @@ export function FlyerDetail({ flyer }: { flyer: FlyerArchiveItem }) {
   const metadata = [
     { label: "Valid from", value: formatDateRange(flyer.dateFrom, flyer.dateTo) },
     { label: "Products tracked", value: String(flyer.productCount) },
-    { label: "Region", value: "Spain" },
   ];
 
   return (
@@ -73,7 +72,7 @@ export function FlyerDetail({ flyer }: { flyer: FlyerArchiveItem }) {
         <h2 className="text-[0.6875rem] font-bold uppercase tracking-[0.1em] text-ink-subtle">
           Flyer details
         </h2>
-        <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+        <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4">
           {metadata.map((item) => (
             <div key={item.label}>
               <dt className="text-xs text-ink-subtle">{item.label}</dt>
