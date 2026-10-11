@@ -443,6 +443,19 @@ The exact production value depends on the final R2 public/custom domain decision
 
 CORS is not required if the browser never calls FastAPI directly. Next.js server components call the API server-to-server. Add CORS only if client-side fetching is introduced later.
 
+### Flyer archive and detail integration (Phase 2)
+
+The Next.js Flyer Archive and Flyer Detail routes use server-side requests to:
+
+- `GET /v1/flyers` — `{items, total, page, page_size}`, with optional `year`, `page`, and `page_size` query parameters.
+- `GET /v1/flyers/{slug}` — one flyer summary.
+
+Each summary currently contains `id` (integer), `slug`, `name`, `category`, nullable `start_date`/`end_date`, `status`, and `product_count`. The frontend maps `id` to a string, `name` to `title` (falling back to `category` only when the name is blank), dates to `dateFrom`/`dateTo` (null becomes empty), and `product_count` to `productCount`; `slug` passes through unchanged. `status` is not currently displayed. It reads all list pages (up to the API's 100-item page maximum) so the current flyer and year filters use the complete result set. The archive does not currently offer page navigation.
+
+The web deployment must set the server-only `LIDL_API_BASE_URL` to the API origin; do not expose it as `NEXT_PUBLIC_*`. Since the browser does not call FastAPI, no CORS configuration is needed.
+
+These endpoints do not return flyer cover artwork, a PDF URL, or a per-flyer product listing. The flyer cover tint is a generated visual placeholder, and the detail page explicitly leaves the product section as unavailable; neither should be presented as API data. The detail page only displays fields available from the summary and omits the prior static region label.
+
 ### Proxying
 
 Do not add a Next.js rewrite or proxy initially. Direct server-side requests to `LIDL_API_BASE_URL` are simpler and keep the boundary explicit. A rewrite can be added later if local browser-facing API paths become useful.
@@ -489,7 +502,7 @@ API implementation or mock implementation
 3. Convert accessors to async functions as needed.
 4. Keep API-to-frontend mapping in the data-access layer, not in presentation components.
 5. Preserve existing component prop types initially.
-6. Retain mock fallback when `LIDL_API_BASE_URL` is unset during migration.
+6. For the Phase 2 flyer routes, require `LIDL_API_BASE_URL` and surface API failures rather than silently falling back to mock flyers. Routes not yet integrated may continue using their existing mock data.
 
 Pages that become async:
 

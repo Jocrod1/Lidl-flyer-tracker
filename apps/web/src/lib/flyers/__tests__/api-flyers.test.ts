@@ -12,7 +12,7 @@ vi.mock("../api", async () => {
 });
 
 const { fetchFlyerBySlug, fetchFlyerList } = await import("../api");
-const { FlyerArchiveEmptyError, getFlyerArchive, getFlyerDetail } = await import("../api-flyers");
+const { getFlyerArchive, getFlyerDetail } = await import("../api-flyers");
 
 const mockedFetchFlyerList = vi.mocked(fetchFlyerList);
 const mockedFetchFlyerBySlug = vi.mocked(fetchFlyerBySlug);
@@ -36,10 +36,16 @@ afterEach(() => {
 });
 
 describe("getFlyerArchive", () => {
-  it("throws FlyerArchiveEmptyError when the API returns no flyers", async () => {
+  it("returns an empty archive when the API has no flyers", async () => {
     mockedFetchFlyerList.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 100 });
 
-    await expect(getFlyerArchive()).rejects.toThrow(FlyerArchiveEmptyError);
+    await expect(getFlyerArchive()).resolves.toMatchObject({
+      currentFlyer: null,
+      pastFlyers: [],
+      totalFlyerCount: 0,
+      years: [],
+      activeYear: "all",
+    });
   });
 
   it("treats the first item as current and excludes it from pastFlyers", async () => {
@@ -52,7 +58,7 @@ describe("getFlyerArchive", () => {
 
     const archive = await getFlyerArchive();
 
-    expect(archive.currentFlyer.id).toBe("2");
+    expect(archive.currentFlyer?.id).toBe("2");
     expect(archive.pastFlyers.map((flyer) => flyer.id)).toEqual(["1"]);
     expect(archive.totalFlyerCount).toBe(2);
     expect(archive.activeYear).toBe("all");
@@ -73,6 +79,29 @@ describe("getFlyerArchive", () => {
 
     const archive = await getFlyerArchive();
 
+    expect(archive.years).toEqual([2026, 2025]);
+  });
+
+  it("loads every API page before choosing the current flyer and year facets", async () => {
+    const flyers = Array.from({ length: 205 }, (_, index) =>
+      dto({
+        id: 205 - index,
+        slug: `flyer-${205 - index}`,
+        start_date: index < 150 ? "2026-08-17" : "2025-08-17",
+      }),
+    );
+    mockedFetchFlyerList.mockImplementation(async ({ page = 1 } = {}) => ({
+      items: flyers.slice((page - 1) * 100, page * 100),
+      total: flyers.length,
+      page,
+      page_size: 100,
+    }));
+
+    const archive = await getFlyerArchive();
+
+    expect(mockedFetchFlyerList).toHaveBeenCalledTimes(3);
+    expect(archive.currentFlyer?.id).toBe("205");
+    expect(archive.pastFlyers).toHaveLength(204);
     expect(archive.years).toEqual([2026, 2025]);
   });
 
