@@ -1,17 +1,17 @@
 """Integration tests for the PostgreSQL persistence layer.
 
-These exercise real SQL against a real Postgres instance (the one
-provided by `docker compose up -d postgres`, matching `.env.example`).
+These exercise real SQL against a real Postgres instance. Set
+`TEST_DATABASE_URL` explicitly to choose the test server.
 They are skipped automatically when no reachable database is configured,
 so `pytest ingestion/tests` still passes in environments without Docker
-— but they are real coverage, not mocks, when run locally or in CI with
-compose up.
+— but they are real coverage, not mocks, when a test server is available.
 """
 
 from __future__ import annotations
 
 import os
 import uuid
+from contextlib import closing
 
 import psycopg2
 import pytest
@@ -19,9 +19,10 @@ import pytest
 from lidl_tracker.models.flyer import FlyerRecord, FlyerStatus
 from lidl_tracker.storage import database as db
 
+# Do not inherit DATABASE_URL: database tests must use an explicit test target.
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    os.environ.get("DATABASE_URL", "postgresql://lidl:lidl@localhost:5432/lidl_dev"),
+    "postgresql://localhost:5432/lidl_test",
 )
 
 
@@ -36,19 +37,31 @@ def _database_available() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _database_available(),
-    reason="no reachable PostgreSQL instance (start it with `docker compose up -d postgres`)",
+    reason="no reachable PostgreSQL test instance (set TEST_DATABASE_URL)",
 )
 
 
 @pytest.fixture(autouse=True)
 def _use_test_database(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
-    db.apply_migrations()
-    yield
-    with psycopg2.connect(TEST_DATABASE_URL) as conn:
+    schema = f"test_lidl_{uuid.uuid4().hex}"
+    with closing(psycopg2.connect(TEST_DATABASE_URL)) as conn, conn:
         with conn.cursor() as cur:
-            cur.execute("TRUNCATE flyers RESTART IDENTITY CASCADE")
-        conn.commit()
+            cur.execute(f"CREATE SCHEMA {schema}")
+
+    def connect_to_isolated_schema():
+        return psycopg2.connect(
+            TEST_DATABASE_URL,
+            options=f"-c search_path={schema}",
+        )
+
+    monkeypatch.setattr(db, "_connect", connect_to_isolated_schema)
+    try:
+        db.apply_migrations()
+        yield
+    finally:
+        with closing(psycopg2.connect(TEST_DATABASE_URL)) as conn, conn:
+            with conn.cursor() as cur:
+                cur.execute(f"DROP SCHEMA {schema} CASCADE")
 
 
 def _insert_flyer(**overrides) -> FlyerRecord:
@@ -168,3 +181,157 @@ class TestGetFlyerBySlug:
 
     def test_not_found_returns_none(self):
         assert db.get_flyer_by_slug("does-not-exist") is None
+
+
+def test_apply_migrations_twice_preserves_existing_records():
+    record = _insert_flyer(slug="migration-check")
+    db.upsert_product_cards(record.id, [_card("migration-check")])
+
+    db.apply_migrations()
+    db.apply_migrations()
+
+    refreshed = db.get_flyer_by_slug("migration-check")
+    assert refreshed is not None
+    assert refreshed[0].id == record.id
+    assert refreshed[1] == 1
+    with db._cursor() as cur:
+        cur.execute(
+            "SELECT payload, image_object_key, image_content_type, image_width, image_height "
+            "FROM product_cards WHERE flyer_id = %s",
+            (record.id,),
+        )
+        card = cur.fetchone()
+    assert card["payload"]["card_hash"].startswith("hash-migration-check-")
+    assert card["image_object_key"] is None
+
+
+def test_fresh_initialization_has_current_schema():
+    with db._cursor() as cur:
+        cur.execute(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND (
+                  (table_name = 'flyers' AND column_name = 'slug')
+                  OR (table_name = 'product_cards' AND column_name IN (
+                      'image_object_key', 'image_content_type',
+                      'image_width', 'image_height'
+                  ))
+              )
+            """
+        )
+        columns = {(row["table_name"], row["column_name"]) for row in cur.fetchall()}
+
+    assert ("flyers", "slug") in columns
+    assert {
+        ("product_cards", "image_object_key"),
+        ("product_cards", "image_content_type"),
+        ("product_cards", "image_width"),
+        ("product_cards", "image_height"),
+    } <= columns
+
+
+def test_apply_migrations_upgrades_existing_schema_without_losing_data():
+    with closing(db._connect()) as conn, conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE product_cards")
+            cur.execute("DROP TABLE flyers")
+            cur.execute(
+                """
+                CREATE TABLE flyers (
+                    id SERIAL PRIMARY KEY,
+                    source_url TEXT NOT NULL,
+                    storage_key TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT '',
+                    name TEXT NOT NULL DEFAULT '',
+                    start_date TEXT,
+                    end_date TEXT,
+                    content_hash TEXT NOT NULL UNIQUE,
+                    downloaded_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    status TEXT NOT NULL DEFAULT 'DISCOVERED',
+                    CONSTRAINT flyers_source_url_unique UNIQUE (source_url)
+                );
+                CREATE TABLE product_cards (
+                    id BIGSERIAL PRIMARY KEY,
+                    flyer_id INTEGER NOT NULL REFERENCES flyers(id) ON DELETE CASCADE,
+                    card_hash TEXT NOT NULL,
+                    card_index INTEGER NOT NULL,
+                    page INTEGER,
+                    bbox JSONB,
+                    raw_text TEXT,
+                    brand TEXT,
+                    name TEXT,
+                    description TEXT,
+                    quantity JSONB,
+                    price DOUBLE PRECISION,
+                    reference_price DOUBLE PRECISION,
+                    unit_prices JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    discount_percent INTEGER,
+                    lidl_plus BOOLEAN NOT NULL DEFAULT FALSE,
+                    currency TEXT NOT NULL DEFAULT 'EUR',
+                    status TEXT NOT NULL,
+                    parser_version TEXT NOT NULL,
+                    warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    notes JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    payload JSONB NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT product_cards_dedupe
+                        UNIQUE (flyer_id, parser_version, card_hash)
+                );
+                """
+            )
+            cur.execute(
+                """
+                INSERT INTO flyers
+                    (source_url, storage_key, category, name, content_hash, status)
+                VALUES ('https://example.com/legacy.pdf', 'legacy.pdf',
+                        'TEST', 'Legacy flyer', 'legacy-hash', 'STORED')
+                RETURNING id
+                """
+            )
+            flyer_id = cur.fetchone()[0]
+            payload = {"card_hash": "legacy-card-hash", "preserved": True}
+            cur.execute(
+                """
+                INSERT INTO product_cards
+                    (flyer_id, card_hash, card_index, status, parser_version, payload)
+                VALUES (%s, 'legacy-card-hash', 7, 'partial', '0.1.0', %s)
+                """,
+                (flyer_id, psycopg2.extras.Json(payload)),
+            )
+
+    db.apply_migrations()
+
+    with db._cursor() as cur:
+        cur.execute(
+            """
+            SELECT f.source_url, f.content_hash, f.slug,
+                   pc.card_index, pc.payload, pc.image_object_key,
+                   pc.image_content_type, pc.image_width, pc.image_height
+            FROM flyers f
+            JOIN product_cards pc ON pc.flyer_id = f.id
+            WHERE f.id = %s
+            """,
+            (flyer_id,),
+        )
+        row = cur.fetchone()
+    assert row["source_url"] == "https://example.com/legacy.pdf"
+    assert row["content_hash"] == "legacy-hash"
+    assert row["slug"] is None
+    assert row["card_index"] == 7
+    assert row["payload"] == payload
+    assert row["image_object_key"] is None
+    assert row["image_content_type"] is None
+    assert row["image_width"] is None
+    assert row["image_height"] is None
+
+    db.apply_migrations()
+    with db._cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS count FROM product_cards WHERE flyer_id = %s",
+            (flyer_id,),
+        )
+        assert cur.fetchone()["count"] == 1

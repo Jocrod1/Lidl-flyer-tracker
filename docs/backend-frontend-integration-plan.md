@@ -676,34 +676,254 @@ This order enables the existing Flyer Detail placeholder to become useful before
 
 ### Phase 3 — Flyer products
 
-**Files likely to change**
+**Status (2026-10-11): contract proposed; implementation blocked on deployed
+API/schema verification and card-version reconciliation.** The checked-in
+FastAPI app includes only health and flyer list/detail routes. There are no
+product routes or product response schemas in the API package. The configured
+frontend URL in the example environment is a local-development example; no
+Render origin is documented or set in this workspace, so a live Render
+OpenAPI contract could not be inspected.
 
-- `apps/api/routers/flyers.py`.
-- `storage/database.py`.
-- `apps/web/src/lib/flyers/api.ts`.
-- `apps/web/src/components/flyers/FlyerDetail.tsx`.
+#### Proposed endpoint
 
-**Database changes**
+```text
+GET /v1/flyers/{slug}/products?page=1&page_size=20
+```
 
-- None.
+Use the existing list envelope, with `page >= 1` and
+`1 <= page_size <= 100` (the current flyer list's default and maximum).
+`items` contains flyer-specific persisted card observations, not canonical
+products. Include all cards in the selected active extraction, including
+partial/failed parses; do not silently discard rows with missing name, price,
+or quantity. `total` is the number of cards in that selected extraction.
+Order stably by `card_index ASC, id ASC`; `card_index` is assigned from zero
+by the current persistence code. An empty known flyer returns HTTP 200 with
+`items: []` and `total: 0`; a page past the end also returns an empty `items`
+array with the unchanged total. An unknown or unresolvable flyer slug returns
+HTTP 404, not an empty page. Keep normal FastAPI query validation for invalid
+page values.
 
-**API changes**
+The following illustrative response uses only fields represented by the
+current extraction/storage model. Values are examples, not claims about a
+particular persisted card:
 
-- Add `GET /v1/flyers/{slug}/products`.
-- Query cards by the persisted flyer ID and order by `card_index`.
+```json
+{
+  "items": [
+    {
+      "id": "314",
+      "card_index": 0,
+      "page": 1,
+      "brand": "CHEF SELECT",
+      "name": "Guacamole",
+      "description": "96% aguacate.",
+      "quantity": {
+        "value": 500.0,
+        "unit": "g",
+        "count": null,
+        "total": 500.0,
+        "approximate": false,
+        "values": [],
+        "raw": "500 g"
+      },
+      "price": 3.75,
+      "reference_price": null,
+      "unit_prices": [
+        {
+          "value": 7.5,
+          "unit": "kg",
+          "basis": 1,
+          "per_unit": 7.5,
+          "raw": "7,50 €/kg"
+        }
+      ],
+      "discount_percent": null,
+      "lidl_plus": false,
+      "currency": "EUR",
+      "status": "ok",
+      "warnings": [],
+      "notes": ["no_unit_price"]
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
 
-**Frontend changes**
+Card `id` is the `product_cards.id`, serialized as a decimal string because
+the column is `BIGSERIAL` and JavaScript numbers cannot exactly represent all
+64-bit integers; `page` is the source PDF page and may be null. `brand`,
+`name`, `description`, `quantity`, `price`, and
+`reference_price` may be null. Preserve the parsed quantity object and its
+`raw` source text rather than guessing a display quantity from `value`,
+`count`, or `unit`; the parser also represents approximate, multi-size, and
+unit-only quantities. `unit_prices` is a JSON array (empty when absent) with
+`value`, `unit`, `basis`, `per_unit`, and `raw`. Preserve `price` as nullable
+numeric data and `currency` as stored (defaulted to `EUR` by ingestion), not
+as a fabricated zero. Promotional facts are `discount_percent` (nullable)
+and `lidl_plus` (boolean); `reference_price` is a separate nullable value and
+must not be given a stronger “was”/“save” interpretation without confirming
+its source semantics. `status` currently uses `ok`, `partial`, or `failed`;
+`warnings` and `notes` are string arrays. These are parser fields, not
+frontend promotion labels.
 
-- Fetch per-flyer products in the flyer detail page.
-- Replace the current “Coming soon” section.
-- Reuse existing product-card presentation where appropriate.
+Do not return parser payload, `raw_text`, card hashes, bounding boxes, or R2
+object keys in this UI endpoint. The current schema has image object keys and
+dimensions, but no public asset URL builder; omit image URLs for now and use
+a neutral artwork placeholder. No product category, canonical product slug,
+or product identity is stored on a card. Do not synthesize these in the API.
+The UI should omit a missing brand, show a neutral “name unavailable” state
+for a missing name, and show a “price unavailable” state rather than sending
+null to `formatPrice`. Show promotion details only when their stored facts
+are present/true. Prefer a flyer-specific card presentation over reusing
+`ProductCard` unchanged: it requires non-null `brand`, `name`, `quantity`,
+`price`, a mock-only category and packaging artwork, and a `/products/{slug}`
+link, none of which is a complete contract for an extracted card.
 
-**Tests required**
+#### Storage relationship and query path
 
-- Flyer/card query tests.
-- API response tests.
-- Empty flyer behavior.
-- Flyer detail rendering test.
+The canonical persisted relationship is
+`product_cards.flyer_id -> flyers.id`, enforced by a foreign key with
+`ON DELETE CASCADE`. The requested route resolves its URL slug using
+`db.get_flyer_by_slug(slug)`, which returns the persisted flyer record and its
+card count (or `None`). If no record or no persisted slug matches, return 404.
+Use the returned integer flyer ID to select that flyer's card rows; never
+look up cards by the slug string, use a week-only identifier, or infer the
+relationship from product names. A new query helper should return a page of
+cards and an unpaged count for that flyer, using bound parameters and the
+stable ordering above. Keep the read logic in the existing database module
+or extract it only if the router begins to grow.
+
+`db.list_flyers()` and `db.get_flyer_by_slug()` already join
+`product_cards` and count rows by `flyer_id`; there is no card-list query
+function yet. `upsert_product_cards(flyer_id, cards)` persists the extracted
+observations, with `card_index`, the parsed scalar/JSON fields, parser
+diagnostics, and payload. `ProductCard.to_dict()` in `cards.py` emits the
+parsed quantity and unit-price structures; `ingest._persist_extraction()`
+adds the content hash and image metadata and calls the upsert. There is no
+product endpoint elsewhere in the checked-in API.
+
+#### Migration and deployed-schema findings
+
+The repository's final intended schema is split across migrations:
+
+- `001_create_flyers.sql`: `flyers`.
+- `002_create_product_cards.sql`: `product_cards`, its flyer FK, unique
+  `(flyer_id, parser_version, card_hash)`, and indexes.
+- `003_add_product_card_image.sql`: four image metadata columns.
+- `004_add_flyer_slug.sql`: nullable `flyers.slug` and a partial unique index.
+
+Schema version 4 is represented by the ordered SQL files 001–004; there is
+no `schema_migrations` table or applied-version ledger. The existing
+architecture applies repeatable DDL rather than recording executions.
+`storage.database.apply_migrations()` keeps the runtime DDL inline. It now
+adds the four nullable image columns with `ADD COLUMN IF NOT EXISTS` (matching
+migration 003), and already adds nullable `flyers.slug` and its partial unique
+index (matching migration 004). These changes are safe to repeat and preserve
+existing flyer/card rows and JSON payloads. Migration 003 was the identified
+runtime gap; migration 004 was already covered.
+
+`CREATE TABLE IF NOT EXISTS` in migrations 001 and 002 does not reconcile
+columns, primary/foreign keys, or unique constraints when a table of the same
+name already exists. The separately declared indexes are attempted on every
+run, but the routine does not rebuild an incompatible or partially created
+base table. Existing installations that were created from migrations 001
+and 002 are covered by the additive 003/004 operations; a partial or
+non-standard base schema still needs read-only inspection and an explicit,
+data-aware repair rather than an automatic constraint rebuild.
+
+The ingestion workflow invokes `cli_ingest --migrate`, which calls this inline
+routine and backfills null flyer slugs; the API Render service does not run
+migrations at startup. Schema migration and slug backfill therefore remain
+an explicit deployment/ingestion operation, not an API startup side effect.
+
+**Migration verification (2026-10-11):** API and parser tests passed
+(`50 passed` across `apps/api/tests`, `ingestion/tests/test_cli_ingest.py`,
+`ingestion/tests/test_parsers.py`, and database test collection; `11`
+PostgreSQL tests skipped because no test
+server was reachable). Fresh-schema, repeat-application, and legacy-schema
+upgrade cases are covered by isolated-schema PostgreSQL tests, but could not
+be executed here: the disposable Docker attempt was blocked because the
+Docker daemon is not running. A wider ingestion/API run also encountered
+unrelated Windows temporary-directory access and PDF-file-lock failures.
+`compileall` passed for the modified Python modules. No repository lint or
+type-check command is configured.
+
+The PostgreSQL migration tests use a uniquely named temporary schema under
+`TEST_DATABASE_URL`; they do not truncate shared tables. They never inherit
+`DATABASE_URL`, and their default is local `lidl_test`. Before rollout,
+operators still need to inspect the intended Render database read-only for
+the four image columns, `flyers.slug`, the FK/indexes, existing records, and
+slug backfill status; then apply the idempotent migration operation through
+the approved deployment process and verify the resulting schema. This local
+work does not establish the production database's actual schema or migrate it.
+
+The configured database targets could not be inspected: read-only
+connections using the available local configuration were unavailable. No
+database mutation was attempted. Therefore actual deployed columns, FK/index
+state, null-slug count, card counts, and parser-version distribution remain
+unverified. Before rollout, inspect `information_schema`, constraints,
+indexes, and read-only counts for `flyers` and `product_cards` in the intended
+deployment database. Apply/reconcile migration 003 if its columns are absent,
+and backfill/verify non-null unique flyer slugs with the existing
+`backfill_flyer_slugs()` process before depending on slug resolution. Do not
+infer production state from `apply_migrations()` or the migration files.
+
+There is a second data-reconciliation concern: the card uniqueness key
+includes `parser_version`, while re-ingestion upserts the current version but
+does not remove older-version rows. Thus multiple extracted versions for the
+same flyer can coexist, and `card_index` is not constrained unique. The
+repository has no explicit active-extraction pointer or batch-completion
+marker from which an API can reliably distinguish the current full set from
+older/stale versions (especially if a later extraction is empty). Audit
+parser versions and duplicate card indexes per flyer before deciding what
+the endpoint counts. If multiple versions exist, define and implement an
+active-set reconciliation policy before presenting rows; do not blindly
+return every version or deduplicate by card index without validating that
+policy.
+
+#### Flyer cards versus Product Explorer products
+
+A flyer card is one extraction observation tied to exactly one flyer and
+identified by its card-row ID. The Product Explorer's mock `Product` is a
+different, cross-flyer concept: it requires a slug, category, required price,
+and product identity. The extraction payload contains `normalized_name`
+inside the `product_cards.payload` JSONB column (it is not a dedicated
+column), and `parsers.normalize_name()` can support the previously proposed
+provisional grouping key `(brand, normalized_name)` for a future derived
+product API.
+That grouping is not a persisted FK or canonical identity: it can split
+variants and cannot provide the mock category. Keep Phase 3 cards flyer-scoped
+and do not link them to `/products/{slug}` until a distinct product mapping
+exists. Deriving Product Explorer groups remains Phase 4.
+
+#### Recommended implementation order / blockers
+
+1. Record the actual Render API origin in deployment configuration/documentation
+   and compare its `/openapi.json` with the checked-in app. The workspace has
+   no configured Render origin, so deployment drift is presently unknown.
+2. Using a read-only database connection, inspect the deployed tables,
+   columns, FK/indexes, null flyer slugs, card counts, and parser-version /
+   card-index duplicates. Reconcile the observed schema with migrations
+   001–004; apply only missing migrations through the approved deployment
+   process. Do not run broad ingestion integration tests against an
+   unidentified database: their fixture truncates `flyers`.
+3. Decide and, if necessary, reconcile the active parser-version card set.
+   Keep this separate from canonical product identity.
+4. Add a parameterized card-page/count query by resolved `flyer_id`, Pydantic
+   schemas for the contract above, and `GET /v1/flyers/{slug}/products`.
+   Preserve 404 for unknown slugs and 200/empty for known flyers with no
+   selected cards.
+5. Add database/query and API contract tests for ownership by flyer, stable
+   ordering, pagination, empty results, optional fields, invalid schemas, and
+   404 behavior.
+6. Add the server-only validated Next.js accessor and map to a dedicated
+   flyer-card view. Fetch all required pages or expose real pagination in the
+   UI; do not call FastAPI from the browser or use unrelated mock products.
+7. Validate empty/loading/error states, optional values, and that every
+   rendered card came from the selected flyer. Keep image placeholders until
+   an asset URL contract exists.
 
 **Risks**
 
