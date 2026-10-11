@@ -36,9 +36,9 @@ def _cursor() -> Generator:
 
 
 def apply_migrations(conn=None) -> None:
-    """Create the flyers table if it does not exist.
+    """Apply repeatable schema DDL for the flyer and product-card tables.
 
-    Idempotent — safe to call on every startup.
+    Idempotent — safe to call repeatedly to bring the schema up to date.
     """
     sql = """
     CREATE TABLE IF NOT EXISTS flyers (
@@ -96,6 +96,13 @@ def apply_migrations(conn=None) -> None:
         updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         CONSTRAINT product_cards_dedupe UNIQUE (flyer_id, parser_version, card_hash)
     );
+
+    -- Migration 003: image metadata may be absent on older product_cards tables.
+    ALTER TABLE product_cards
+        ADD COLUMN IF NOT EXISTS image_object_key TEXT,
+        ADD COLUMN IF NOT EXISTS image_content_type TEXT,
+        ADD COLUMN IF NOT EXISTS image_width INTEGER,
+        ADD COLUMN IF NOT EXISTS image_height INTEGER;
 
     CREATE INDEX IF NOT EXISTS product_cards_flyer_idx
         ON product_cards (flyer_id);

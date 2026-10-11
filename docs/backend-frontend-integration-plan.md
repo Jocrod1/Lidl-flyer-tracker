@@ -94,14 +94,16 @@ Defined in `migrations/001_create_flyers.sql` and duplicated as inline SQL in `s
 | `downloaded_at` | `TIMESTAMPTZ` | Download timestamp |
 | `created_at` | `TIMESTAMPTZ NOT NULL` | Persistence timestamp |
 | `status` | `TEXT NOT NULL DEFAULT 'DISCOVERED'` | Ingestion status |
+| `slug` | `TEXT` | Nullable persisted flyer slug, added by migration 004 |
 
 Indexes and constraints:
 
 - Unique `content_hash` constraint.
 - Unique `source_url` constraint.
 - `flyers_status_idx` on `status`.
+- Partial unique `flyers_slug_unique` index on non-null `slug`.
 
-Important limitation: there is no `slug` column. The acquisition slug is derived from a Lidl URL and is used in memory and CLI arguments, but is not persisted.
+Older flyers may have a null slug until `backfill_flyer_slugs()` is run.
 
 ### `product_cards`
 
@@ -164,6 +166,34 @@ What does not exist is a canonical product entity:
 - `card_hash` identifies an extracted card within a flyer, not a product across flyers.
 - Entity resolution and appearance history are explicitly not implemented.
 - `normalized_name` exists inside the card payload but is not a dedicated column.
+
+### Migration behavior and schema version
+
+The checked-in ordered SQL migrations 001–004 define schema version 4: base
+flyer and product-card tables/indexes, four image metadata columns on
+`product_cards` (003), and the nullable flyer slug plus partial unique index
+(004). There is no applied-version history table. `apply_migrations()` uses
+repeatable inline DDL; it now uses `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
+for all four image columns, matching migration 003. It already performs the
+equivalent additive operations for migration 004. Reapplying these changes
+does not replace tables or delete flyer, card, or payload data.
+
+`CREATE TABLE IF NOT EXISTS` in migrations 001–002 does not reconcile columns
+or constraints on a same-named existing table. The automated additive
+upgrades cover installations with the expected 001–002 base schema; partial
+or non-standard base schemas still require explicit, data-aware inspection.
+Migrations are invoked by ingestion `--migrate`, not automatically by API
+startup.
+
+Migration tests cover fresh initialization, repeat application, and upgrading
+a legacy schema while checking existing flyer/card data and JSON payload
+remain intact. On 2026-10-11, focused parser, CLI, database collection, and
+API tests reported 50 passed and 11 skipped. PostgreSQL integration tests
+were skipped because no test database was reachable; a disposable Docker
+database could not start because the Docker daemon was unavailable. Before
+production rollout, inspect the Render database read-only, apply migrations
+through the approved process, then verify columns, constraints/indexes,
+relationships, and existing records.
 
 ## 3. Frontend Data Requirements
 

@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--migrate",
         action="store_true",
-        help="run DB migrations (CREATE TABLE IF NOT EXISTS) before ingesting",
+        help="apply idempotent database migrations before ingesting",
     )
     parser.add_argument(
         "--slug",
