@@ -11,9 +11,15 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from lidl_tracker.parsers import PARSER_VERSION
 from lidl_tracker.storage import database as db
 
-from ..schemas import FlyerListResponse, FlyerSummary
+from ..schemas import (
+    FlyerListResponse,
+    FlyerProductsResponse,
+    FlyerSummary,
+    ProductCardResponse,
+)
 
 router = APIRouter(prefix="/v1/flyers", tags=["flyers"])
 
@@ -53,3 +59,31 @@ def get_flyer(slug: str) -> FlyerSummary:
         raise HTTPException(status_code=404, detail="Flyer not found")
     record, product_count = result
     return _to_summary(record, product_count)
+
+
+@router.get("/{slug}/products", response_model=FlyerProductsResponse)
+def list_flyer_products(
+    slug: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+) -> FlyerProductsResponse:
+    result = db.get_flyer_by_slug(slug)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Flyer not found")
+
+    flyer, _ = result
+    if flyer.id is None:
+        raise RuntimeError("Persisted flyer record has no database ID")
+    cards, total = db.list_product_cards(
+        flyer.id,
+        parser_version=PARSER_VERSION,
+        page=page,
+        page_size=page_size,
+    )
+    items = [
+        ProductCardResponse.model_validate({**card, "id": str(card["id"])})
+        for card in cards
+    ]
+    return FlyerProductsResponse(
+        items=items, total=total, page=page, page_size=page_size
+    )

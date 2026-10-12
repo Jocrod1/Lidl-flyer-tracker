@@ -706,15 +706,16 @@ This order enables the existing Flyer Detail placeholder to become useful before
 
 ### Phase 3 — Flyer products
 
-**Status (2026-10-11): contract proposed; implementation blocked on deployed
-API/schema verification and card-version reconciliation.** The checked-in
-FastAPI app includes only health and flyer list/detail routes. There are no
-product routes or product response schemas in the API package. The configured
-frontend URL in the example environment is a local-development example; no
-Render origin is documented or set in this workspace, so a live Render
-OpenAPI contract could not be inspected.
+**Status (2026-10-12): per-flyer cards API implemented; frontend integration
+remains deferred.** The audited production schema and card-version findings
+provided for this phase match the checked-in model. The API serves cards from
+the parser version deployed with the service (currently `0.1.0`) and keeps
+other parser versions separate. The Render service is documented to use Neon
+through `DATABASE_URL`, but this workspace has no Render service binding or
+Render API credentials with which to verify that its live Neon branch matches
+the audited database.
 
-#### Proposed endpoint
+#### Implemented endpoint
 
 ```text
 GET /v1/flyers/{slug}/products?page=1&page_size=20
@@ -723,15 +724,16 @@ GET /v1/flyers/{slug}/products?page=1&page_size=20
 Use the existing list envelope, with `page >= 1` and
 `1 <= page_size <= 100` (the current flyer list's default and maximum).
 `items` contains flyer-specific persisted card observations, not canonical
-products. Include all cards in the selected active extraction, including
-partial/failed parses; do not silently discard rows with missing name, price,
-or quantity. `total` is the number of cards in that selected extraction.
-Order stably by `card_index ASC, id ASC`; `card_index` is assigned from zero
-by the current persistence code. An empty known flyer returns HTTP 200 with
-`items: []` and `total: 0`; a page past the end also returns an empty `items`
-array with the unchanged total. An unknown or unresolvable flyer slug returns
-HTTP 404, not an empty page. Keep normal FastAPI query validation for invalid
-page values.
+products. The endpoint selects only the parser version deployed with the API
+(`lidl_tracker.parsers.PARSER_VERSION`); it does not combine older versions.
+Within that version it returns all statuses, including `partial` cards with
+warnings and `failed` cards missing required name or price. `total` counts
+cards in that selected version. Order is stable by `card_index ASC, id ASC`;
+`card_index` is assigned from zero by the persistence code. An empty known
+flyer returns HTTP 200 with `items: []` and `total: 0`; a page past the end
+also returns an empty `items` array with the unchanged total. An unknown
+flyer slug returns HTTP 404, not an empty page. Query validation follows the
+flyer list route: `page >= 1`, `1 <= page_size <= 100`, default page size 20.
 
 The following illustrative response uses only fields represented by the
 current extraction/storage model. Values are examples, not claims about a
@@ -771,6 +773,7 @@ particular persisted card:
       "lidl_plus": false,
       "currency": "EUR",
       "status": "ok",
+      "parser_version": "0.1.0",
       "warnings": [],
       "notes": ["no_unit_price"]
     }
@@ -783,7 +786,8 @@ particular persisted card:
 
 Card `id` is the `product_cards.id`, serialized as a decimal string because
 the column is `BIGSERIAL` and JavaScript numbers cannot exactly represent all
-64-bit integers; `page` is the source PDF page and may be null. `brand`,
+64-bit integers; `parser_version` identifies the selected extraction;
+`page` is the source PDF page and may be null. `brand`,
 `name`, `description`, `quantity`, `price`, and
 `reference_price` may be null. Preserve the parsed quantity object and its
 `raw` source text rather than guessing a display quantity from `value`,
@@ -825,14 +829,15 @@ cards and an unpaged count for that flyer, using bound parameters and the
 stable ordering above. Keep the read logic in the existing database module
 or extract it only if the router begins to grow.
 
-`db.list_flyers()` and `db.get_flyer_by_slug()` already join
-`product_cards` and count rows by `flyer_id`; there is no card-list query
-function yet. `upsert_product_cards(flyer_id, cards)` persists the extracted
-observations, with `card_index`, the parsed scalar/JSON fields, parser
-diagnostics, and payload. `ProductCard.to_dict()` in `cards.py` emits the
-parsed quantity and unit-price structures; `ingest._persist_extraction()`
-adds the content hash and image metadata and calls the upsert. There is no
-product endpoint elsewhere in the checked-in API.
+The route resolves the persisted slug with `db.get_flyer_by_slug()` and passes
+the returned flyer ID and active parser version to
+`db.list_product_cards()`. The database helper uses bound parameters for both
+the page query and count, and orders by `card_index, id`. The response omits
+payload, raw text, hashes, bounding boxes, and stored image metadata because
+there is no public image URL contract. `ProductCard.to_dict()` in `cards.py`
+emits the parsed quantity and unit-price structures;
+`ingest._persist_extraction()` adds the content hash and image metadata and
+calls the upsert.
 
 #### Migration and deployed-schema findings
 
@@ -877,41 +882,38 @@ upgrade cases are covered by isolated-schema PostgreSQL tests, but could not
 be executed here: the disposable Docker attempt was blocked because the
 Docker daemon is not running. A wider ingestion/API run also encountered
 unrelated Windows temporary-directory access and PDF-file-lock failures.
-`compileall` passed for the modified Python modules. No repository lint or
+`compileall` passed for the modified Python modules. No Python lint or
 type-check command is configured.
 
 The PostgreSQL migration tests use a uniquely named temporary schema under
 `TEST_DATABASE_URL`; they do not truncate shared tables. They never inherit
-`DATABASE_URL`, and their default is local `lidl_test`. Before rollout,
-operators still need to inspect the intended Render database read-only for
-the four image columns, `flyers.slug`, the FK/indexes, existing records, and
-slug backfill status; then apply the idempotent migration operation through
-the approved deployment process and verify the resulting schema. This local
-work does not establish the production database's actual schema or migrate it.
+`DATABASE_URL`, and their default is local `lidl_test`. In this phase, the
+PostgreSQL integration tests were skipped because no local test server was
+available. No production connection, migration, or data mutation was
+attempted. The supplied audit did not include a null-slug/backfill count, so
+verify that separately before relying on slug resolution for every flyer.
 
-The configured database targets could not be inspected: read-only
-connections using the available local configuration were unavailable. No
-database mutation was attempted. Therefore actual deployed columns, FK/index
-state, null-slug count, card counts, and parser-version distribution remain
-unverified. Before rollout, inspect `information_schema`, constraints,
-indexes, and read-only counts for `flyers` and `product_cards` in the intended
-deployment database. Apply/reconcile migration 003 if its columns are absent,
-and backfill/verify non-null unique flyer slugs with the existing
-`backfill_flyer_slugs()` process before depending on slug resolution. Do not
-infer production state from `apply_migrations()` or the migration files.
+The production inspection supplied for this phase confirmed the unique
+partial `flyers.slug` index, the four card-image metadata columns, the
+`product_cards.flyer_id -> flyers.id ON DELETE CASCADE` foreign key, and the
+unique `(flyer_id, parser_version, card_hash)` constraint. It found 1,409
+cards across nine flyers, all on parser version `0.1.0`, including both `ok`
+and `partial` statuses. This implementation uses those findings; it did not
+connect to or mutate production. The inspection did not establish the live
+Render service's configured `DATABASE_URL` value or Neon branch. Deployment
+documentation specifies Neon via `DATABASE_URL` and no separate branch, so
+the intended target is the audited Neon database; its actual live binding
+remains unverified from this workspace.
 
-There is a second data-reconciliation concern: the card uniqueness key
-includes `parser_version`, while re-ingestion upserts the current version but
-does not remove older-version rows. Thus multiple extracted versions for the
-same flyer can coexist, and `card_index` is not constrained unique. The
-repository has no explicit active-extraction pointer or batch-completion
-marker from which an API can reliably distinguish the current full set from
-older/stale versions (especially if a later extraction is empty). Audit
-parser versions and duplicate card indexes per flyer before deciding what
-the endpoint counts. If multiple versions exist, define and implement an
-active-set reconciliation policy before presenting rows; do not blindly
-return every version or deduplicate by card index without validating that
-policy.
+The uniqueness key permits multiple parser versions to coexist, and
+`card_index` is not constrained unique. This API intentionally selects only
+the parser version deployed with the API and counts/orders rows within that
+version; it does not merge historical versions or deduplicate by index. The
+audited production data currently has only `0.1.0`. If a parser version is
+upgraded, flyers without rows for that version will return an empty selected
+set until re-extracted. The flyer summary's existing `product_count` still
+counts all persisted versions, so those counts could differ if historical
+versions are later retained alongside current rows.
 
 #### Flyer cards versus Product Explorer products
 
@@ -930,28 +932,18 @@ exists. Deriving Product Explorer groups remains Phase 4.
 
 #### Recommended implementation order / blockers
 
-1. Record the actual Render API origin in deployment configuration/documentation
-   and compare its `/openapi.json` with the checked-in app. The workspace has
-   no configured Render origin, so deployment drift is presently unknown.
-2. Using a read-only database connection, inspect the deployed tables,
-   columns, FK/indexes, null flyer slugs, card counts, and parser-version /
-   card-index duplicates. Reconcile the observed schema with migrations
-   001–004; apply only missing migrations through the approved deployment
-   process. Do not run broad ingestion integration tests against an
-   unidentified database: their fixture truncates `flyers`.
-3. Decide and, if necessary, reconcile the active parser-version card set.
-   Keep this separate from canonical product identity.
-4. Add a parameterized card-page/count query by resolved `flyer_id`, Pydantic
-   schemas for the contract above, and `GET /v1/flyers/{slug}/products`.
-   Preserve 404 for unknown slugs and 200/empty for known flyers with no
-   selected cards.
-5. Add database/query and API contract tests for ownership by flyer, stable
-   ordering, pagination, empty results, optional fields, invalid schemas, and
-   404 behavior.
-6. Add the server-only validated Next.js accessor and map to a dedicated
-   flyer-card view. Fetch all required pages or expose real pagination in the
-   UI; do not call FastAPI from the browser or use unrelated mock products.
-7. Validate empty/loading/error states, optional values, and that every
+1. The API query, response schemas, route, and mocked API contract tests are
+   implemented. The production findings supplied for this phase confirm the
+   persisted fields and a single parser version; historical versions remain
+   excluded rather than merged into the response.
+2. The deployment documentation identifies the Render service and its
+   `DATABASE_URL`-to-Neon configuration, but its live database/branch binding
+   and API origin could not be verified from this workspace.
+3. Frontend API access and flyer-specific card rendering remain a separate
+   implementation task. Keep these observations separate from canonical
+   products; fetch/paginate the API from the server and display missing
+   values without inventing image URLs.
+4. Validate empty/loading/error states, optional values, and that every
    rendered card came from the selected flyer. Keep image placeholders until
    an asset URL contract exists.
 
