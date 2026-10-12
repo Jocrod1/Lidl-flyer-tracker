@@ -10,9 +10,9 @@ lockstep.
 
 from __future__ import annotations
 
-from typing import Generic, List, Optional, TypeVar
+from typing import Generic, List, Literal, Optional, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 T = TypeVar("T")
 
@@ -47,4 +47,71 @@ class Page(BaseModel, Generic[T]):
 
 
 class FlyerListResponse(Page[FlyerSummary]):
+    pass
+
+
+class QuantityResponse(BaseModel):
+    """Parsed quantity data as persisted on a product card."""
+
+    value: Optional[float] = Field(description="Parsed size value, if available.")
+    unit: Optional[str] = Field(description="Normalized size unit, if available.")
+    count: Optional[int] = Field(description="Pack count, if available.")
+    total: Optional[float] = Field(description="Calculated total size, if available.")
+    approximate: bool = Field(description="Whether the printed quantity is approximate.")
+    values: List[float] = Field(
+        description="Multiple advertised values when no single size applies."
+    )
+    raw: str = Field(description="Original quantity text extracted from the flyer.")
+
+
+class UnitPriceResponse(BaseModel):
+    """One unit-price measurement extracted from a card."""
+
+    value: float
+    unit: str
+    basis: int
+    per_unit: float
+    raw: str
+
+
+class ProductCardResponse(BaseModel):
+    """A flyer-specific card observation from the active parser version.
+
+    Extraction statuses are `ok`, `partial` (usable required fields with
+    warnings), or `failed` (missing a required name or price). All statuses
+    are returned so incomplete observations remain available to consumers.
+    """
+
+    id: str = Field(description="Database ID serialized as a decimal string.")
+    card_index: int = Field(description="Stable zero-based position within the flyer.")
+    page: Optional[int] = Field(description="Source PDF page, when known.")
+    brand: Optional[str] = Field(description="Extracted brand, if available.")
+    name: Optional[str] = Field(description="Extracted product name, if available.")
+    description: Optional[str] = Field(description="Extracted description, if available.")
+    quantity: Optional[QuantityResponse] = Field(
+        description="Structured quantity data, if extracted."
+    )
+    price: Optional[float] = Field(description="Extracted price, if available.")
+    reference_price: Optional[float] = Field(
+        description="Separately extracted reference price, if available."
+    )
+    unit_prices: List[UnitPriceResponse] = Field(
+        description="Extracted unit-price measurements."
+    )
+    discount_percent: Optional[int] = Field(
+        description="Extracted discount percentage, if available."
+    )
+    lidl_plus: bool = Field(description="Whether the card identifies a Lidl Plus price.")
+    currency: str = Field(description="Currency recorded for the card.")
+    status: Literal["ok", "partial", "failed"] = Field(
+        description="Parser extraction quality; partial and failed cards are retained."
+    )
+    parser_version: str = Field(description="Parser version that produced this card.")
+    warnings: List[str] = Field(description="Extraction warnings.")
+    notes: List[str] = Field(description="Non-fatal extraction notes.")
+
+
+class FlyerProductsResponse(Page[ProductCardResponse]):
+    """One paginated page of a flyer's cards from the active parser version."""
+
     pass

@@ -3,8 +3,9 @@
 Read-only FastAPI service exposing ingested flyer data (Postgres via
 `lidl_tracker.storage.database`) to the Next.js frontend in `apps/web`.
 
-This is Phase 1 of `docs/backend-frontend-integration-plan.md`: flyer
-list/detail only. Product endpoints and images land in later phases.
+This implements the flyer list/detail routes and the Phase 3 flyer-card API
+from `docs/backend-frontend-integration-plan.md`. Canonical product endpoints
+and image URLs are not part of this API.
 Render deployment settings are documented in
 `docs/render-deployment.md`. The current deployment is the `main` branch
 served by the `lidl-tracker-api` Render service.
@@ -38,16 +39,24 @@ For a production-style local launch, set `PORT` if needed and run:
 python -m api.run
 ```
 
-## Endpoints (Phase 1)
+## Endpoints
 
 ```
 GET /health
 GET /v1/flyers?year=&page=&page_size=
 GET /v1/flyers/{slug}
+GET /v1/flyers/{slug}/products?page=&page_size=
 ```
 
-See `docs/backend-frontend-integration-plan.md` §4 for the full API
-design rationale and the endpoints planned for later phases.
+The flyer products endpoint returns a paginated `{items, total, page,
+page_size}` envelope of cards from the currently deployed parser version.
+It retains `ok`, `partial`, and `failed` extraction statuses; card fields and
+nullable values are documented by the generated OpenAPI schema. Pagination
+defaults to 20 cards and accepts a maximum page size of 100. A known flyer
+with no cards returns an empty page; an unknown slug returns 404.
+
+See `docs/backend-frontend-integration-plan.md` for the response contract and
+design rationale.
 
 ## Tests
 

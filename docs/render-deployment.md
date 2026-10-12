@@ -43,8 +43,8 @@ configuration only. When used by ingestion, `R2_ACCESS_KEY_ID` and
 credentials.
 
 The `/health` endpoint is intentionally lightweight and does not contact Neon
-or R2. `/v1/flyers` and `/v1/flyers/{slug}` require the configured database
-connection.
+or R2. `/v1/flyers`, `/v1/flyers/{slug}`, and
+`/v1/flyers/{slug}/products` require the configured database connection.
 
 ## Future PR/Staging deployments
 

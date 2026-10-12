@@ -283,6 +283,47 @@ def get_flyer_by_slug(slug: str) -> Optional[tuple[FlyerRecord, int]]:
     return _row_to_record(row), row["product_count"]
 
 
+def list_product_cards(
+    flyer_id: int,
+    *,
+    parser_version: str,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[dict], int]:
+    """Return one page of cards for a flyer and parser version, plus its total."""
+    offset = (page - 1) * page_size
+    params = {"flyer_id": flyer_id, "parser_version": parser_version}
+
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM product_cards
+            WHERE flyer_id = %(flyer_id)s
+              AND parser_version = %(parser_version)s
+            """,
+            params,
+        )
+        total = cur.fetchone()["count"]
+
+        cur.execute(
+            """
+            SELECT id, card_index, page, brand, name, description, quantity,
+                   price, reference_price, unit_prices, discount_percent,
+                   lidl_plus, currency, status, parser_version, warnings, notes
+            FROM product_cards
+            WHERE flyer_id = %(flyer_id)s
+              AND parser_version = %(parser_version)s
+            ORDER BY card_index ASC, id ASC
+            LIMIT %(limit)s OFFSET %(offset)s
+            """,
+            {**params, "limit": page_size, "offset": offset},
+        )
+        rows = cur.fetchall()
+
+    return [dict(row) for row in rows], total
+
+
 def upsert_product_cards(flyer_id: int, cards: list[dict]) -> None:
     """Insert/update extracted cards for one flyer idempotently."""
     with _cursor() as cur:
