@@ -1,18 +1,26 @@
 import Link from "next/link";
 
 import { FlyerCover } from "@/components/flyers/FlyerCover";
+import { ProductGrid } from "@/components/products/ProductGrid";
 import { Container } from "@/components/ui/Container";
 import { formatDateRange, type FlyerArchiveItem } from "@/lib/flyers";
+import type { FlyerProductCard } from "@/lib/products";
 
 /**
  * Screen composition for Flyer Detail (`/flyers/[slug]`).
  *
- * Establishes the routing/data shape for a future PDF viewer without
- * building one yet — the product list below is a placeholder section, ready
- * to be swapped for the real per-flyer product listing once the ingestion
- * backend can join products to a flyer.
+ * Keeps flyer-specific card observations in the existing product-card
+ * presentation without treating them as canonical products.
  */
-export function FlyerDetail({ flyer }: { flyer: FlyerArchiveItem }) {
+export function FlyerDetail({
+  flyer,
+  products,
+  productsError,
+}: {
+  flyer: FlyerArchiveItem;
+  products: FlyerProductCard[];
+  productsError: boolean;
+}) {
   const metadata = [
     { label: "Valid from", value: formatDateRange(flyer.dateFrom, flyer.dateTo) },
     { label: "Products tracked", value: String(flyer.productCount) },
@@ -86,21 +94,37 @@ export function FlyerDetail({ flyer }: { flyer: FlyerArchiveItem }) {
         <h2 className="text-lg font-bold tracking-tight text-ink sm:text-xl">
           Products in this flyer
         </h2>
-        <p className="mt-1 text-sm text-ink-muted">
-          The per-flyer product listing isn&apos;t wired up yet — this section is
-          reserved for it once the ingestion backend can join products to a
-          specific flyer.
-        </p>
-        <div className="mt-5 rounded-[var(--radius-card)] border border-dashed border-line-strong bg-surface p-10 text-center">
-          <p className="text-sm font-semibold text-ink">Coming soon</p>
-          <p className="mt-1 text-sm text-ink-muted">
-            In the meantime, browse{" "}
-            <Link href="/" className="font-medium text-brand hover:text-brand-strong">
-              all tracked products
-            </Link>
-            .
-          </p>
-        </div>
+        {productsError ? (
+          <div
+            role="status"
+            className="mt-5 rounded-[var(--radius-card)] border border-dashed border-line-strong bg-surface p-10 text-center"
+          >
+            <p className="text-sm font-semibold text-ink">
+              We couldn&apos;t load this flyer&apos;s product cards
+            </p>
+            <p className="mt-1 text-sm text-ink-muted">
+              The Flyer API might be unavailable right now. Please try again
+              later or return to the{" "}
+              <Link
+                href="/flyers"
+                className="font-medium text-brand hover:text-brand-strong"
+              >
+                flyer archive
+              </Link>
+              .
+            </p>
+          </div>
+        ) : (
+          <div className="mt-5">
+            <ProductGrid
+              products={products}
+              emptyState={{
+                title: "No product cards in this flyer",
+                description: "There are no extracted product cards to show yet.",
+              }}
+            />
+          </div>
+        )}
       </section>
     </Container>
   );

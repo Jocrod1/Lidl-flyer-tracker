@@ -1,6 +1,8 @@
-import type { Product } from "@/lib/products";
+import type { FlyerProductCard, Product } from "@/lib/products";
 
 import { ProductCard } from "./ProductCard";
+
+type ProductCardItem = Product | FlyerProductCard;
 
 /**
  * Mobile-first responsive grid.
@@ -9,14 +11,21 @@ import { ProductCard } from "./ProductCard";
  * cards scannable instead of one huge tile per screen), then three and four on
  * larger screens so cards never stretch out of proportion.
  */
-export function ProductGrid({ products }: { products: Product[] }) {
+export function ProductGrid({
+  products,
+  emptyState = {
+    title: "No products found",
+    description: "Try a different search term or clear the filters.",
+  },
+}: {
+  products: ProductCardItem[];
+  emptyState?: { title: string; description: string };
+}) {
   if (products.length === 0) {
     return (
       <div className="rounded-[var(--radius-card)] border border-dashed border-line-strong bg-surface p-10 text-center">
-        <p className="text-sm font-semibold text-ink">No products found</p>
-        <p className="mt-1 text-sm text-ink-muted">
-          Try a different search term or clear the filters.
-        </p>
+        <p className="text-sm font-semibold text-ink">{emptyState.title}</p>
+        <p className="mt-1 text-sm text-ink-muted">{emptyState.description}</p>
       </div>
     );
   }

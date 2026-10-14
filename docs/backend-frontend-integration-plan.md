@@ -706,8 +706,8 @@ This order enables the existing Flyer Detail placeholder to become useful before
 
 ### Phase 3 — Flyer products
 
-**Status (2026-10-12): per-flyer cards API implemented; frontend integration
-remains deferred.** The audited production schema and card-version findings
+**Status (2026-10-14): per-flyer cards API and frontend integration
+implemented.** The audited production schema and card-version findings
 provided for this phase match the checked-in model. The API serves cards from
 the parser version deployed with the service (currently `0.1.0`) and keeps
 other parser versions separate. The Render service is documented to use Neon
@@ -805,15 +805,14 @@ frontend promotion labels.
 Do not return parser payload, `raw_text`, card hashes, bounding boxes, or R2
 object keys in this UI endpoint. The current schema has image object keys and
 dimensions, but no public asset URL builder; omit image URLs for now and use
-a neutral artwork placeholder. No product category, canonical product slug,
-or product identity is stored on a card. Do not synthesize these in the API.
-The UI should omit a missing brand, show a neutral “name unavailable” state
-for a missing name, and show a “price unavailable” state rather than sending
-null to `formatPrice`. Show promotion details only when their stored facts
-are present/true. Prefer a flyer-specific card presentation over reusing
-`ProductCard` unchanged: it requires non-null `brand`, `name`, `quantity`,
-`price`, a mock-only category and packaging artwork, and a `/products/{slug}`
-link, none of which is a complete contract for an extracted card.
+a generated packaging placeholder. No product category, canonical product
+slug, or product identity is stored on a card. Do not synthesize these in the
+API. The UI omits a missing brand, shows “Name unavailable” for a missing
+name, and shows “Price unavailable” rather than sending null to
+`formatPrice`. Promotion details are shown only when their stored facts are
+present/true. The shared `ProductCard`/`ProductGrid` presentation supports
+both canonical products and flyer-card observations: observation cards show
+their extraction status and never link to `/products/{slug}`.
 
 #### Storage relationship and query path
 
@@ -939,13 +938,16 @@ exists. Deriving Product Explorer groups remains Phase 4.
 2. The deployment documentation identifies the Render service and its
    `DATABASE_URL`-to-Neon configuration, but its live database/branch binding
    and API origin could not be verified from this workspace.
-3. Frontend API access and flyer-specific card rendering remain a separate
-   implementation task. Keep these observations separate from canonical
-   products; fetch/paginate the API from the server and display missing
-   values without inventing image URLs.
-4. Validate empty/loading/error states, optional values, and that every
-   rendered card came from the selected flyer. Keep image placeholders until
-   an asset URL contract exists.
+3. The frontend extends its server-only API client and response validators,
+   then loads all pages with `page_size=100` from the server-rendered flyer
+   detail route. Pagination metadata is checked across pages; API errors use
+   an inline product-section error state, while 404 responses preserve the
+   flyer-specific not-found route.
+4. Flyer cards reuse the existing product grid/card styling and retain
+   extraction statuses, warnings, and nullable fields. Empty flyers have a
+   dedicated empty state. No browser-side fetching, canonical product links,
+   category claims, or real image delivery were added; generated image
+   placeholders remain until a public image URL contract exists.
 
 **Risks**
 

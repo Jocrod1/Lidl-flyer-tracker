@@ -6,6 +6,7 @@ import {
   MissingApiBaseUrlError,
   fetchFlyerBySlug,
   fetchFlyerList,
+  fetchFlyerProducts,
 } from "../api";
 
 const ORIGINAL_BASE_URL = process.env.LIDL_API_BASE_URL;
@@ -167,5 +168,90 @@ describe("fetchFlyerBySlug", () => {
       "http://localhost:8000/v1/flyers/a%20b",
       expect.anything(),
     );
+  });
+});
+
+describe("fetchFlyerProducts", () => {
+  beforeEach(() => {
+    process.env.LIDL_API_BASE_URL = "http://localhost:8000";
+  });
+
+  const card = {
+    id: "314",
+    card_index: 0,
+    page: 1,
+    brand: null,
+    name: "Guacamole",
+    description: null,
+    quantity: {
+      value: 500,
+      unit: "g",
+      count: null,
+      total: 500,
+      approximate: false,
+      values: [],
+      raw: "500 g",
+    },
+    price: 3.75,
+    reference_price: null,
+    unit_prices: [{ value: 7.5, unit: "kg", basis: 1, per_unit: 7.5, raw: "7,50 €/kg" }],
+    discount_percent: null,
+    lidl_plus: false,
+    currency: "EUR",
+    status: "partial",
+    parser_version: "0.1.0",
+    warnings: ["missing_brand"],
+    notes: [],
+  };
+
+  it("requests the encoded flyer slug and requested page parameters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ items: [card], total: 1, page: 2, page_size: 50 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchFlyerProducts("week 1", { page: 2, page_size: 50 });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/v1/flyers/week%201/products?page=2&page_size=50",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+  });
+
+  it("validates and returns the card response without dropping nullable fields or status", async () => {
+    const body = { items: [card], total: 1, page: 1, page_size: 20 };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(body)));
+
+    await expect(fetchFlyerProducts("flyer")).resolves.toEqual(body);
+  });
+
+  it("rejects an invalid nested card response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [{ ...card, quantity: { raw: "500 g" } }],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        }),
+      ),
+    );
+
+    await expect(fetchFlyerProducts("flyer")).rejects.toThrow(
+      "invalid flyer products response",
+    );
+  });
+
+  it("maps an unknown flyer response to FlyerNotFoundError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, { status: 404 })));
+
+    await expect(fetchFlyerProducts("missing")).rejects.toThrow(FlyerNotFoundError);
+  });
+
+  it("surfaces API failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({}, { status: 503 })));
+
+    await expect(fetchFlyerProducts("flyer")).rejects.toThrow(FlyerApiError);
   });
 });
