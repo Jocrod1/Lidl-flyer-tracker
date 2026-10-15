@@ -58,6 +58,41 @@ export interface Product {
   };
 }
 
+/** One extracted card observation belonging to a single flyer. */
+export interface FlyerProductCard {
+  id: string;
+  cardIndex: number;
+  page: number | null;
+  brand: string | null;
+  name: string | null;
+  description: string | null;
+  quantity: {
+    value: number | null;
+    unit: string | null;
+    count: number | null;
+    total: number | null;
+    approximate: boolean;
+    values: number[];
+    raw: string;
+  } | null;
+  price: number | null;
+  referencePrice: number | null;
+  unitPrices: Array<{
+    value: number;
+    unit: string;
+    basis: number;
+    perUnit: number;
+    raw: string;
+  }>;
+  discountPercent: number | null;
+  lidlPlus: boolean;
+  currency: string;
+  status: "ok" | "partial" | "failed";
+  parserVersion: string;
+  warnings: string[];
+  notes: string[];
+}
+
 /**
  * A single flyer this product appeared in.
  *

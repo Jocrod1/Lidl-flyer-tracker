@@ -2,7 +2,14 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { FlyerDetail } from "@/components/flyers/FlyerDetail";
-import { FlyerNotFoundError, formatDateRange, getFlyerDetail } from "@/lib/flyers";
+import {
+  FlyerApiError,
+  FlyerNotFoundError,
+  formatDateRange,
+  getFlyerDetail,
+  getFlyerProducts,
+} from "@/lib/flyers";
+import type { FlyerProductCard } from "@/lib/products";
 
 // No generateStaticParams() here: flyers are ingested weekly and the API
 // is now the source of truth, so prebuilding every slug at build time
@@ -52,5 +59,25 @@ export default async function FlyerDetailPage({
     throw error;
   }
 
-  return <FlyerDetail flyer={flyer} />;
+  let products: FlyerProductCard[] = [];
+  let productsError = false;
+  try {
+    products = await getFlyerProducts(slug);
+  } catch (error) {
+    if (error instanceof FlyerNotFoundError) {
+      notFound();
+    }
+    if (!(error instanceof FlyerApiError)) {
+      throw error;
+    }
+    productsError = true;
+  }
+
+  return (
+    <FlyerDetail
+      flyer={flyer}
+      products={products}
+      productsError={productsError}
+    />
+  );
 }

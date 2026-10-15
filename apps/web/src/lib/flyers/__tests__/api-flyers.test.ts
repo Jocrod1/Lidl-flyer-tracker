@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FlyerNotFoundError, type FlyerSummaryDTO } from "../api";
+import {
+  FlyerApiError,
+  FlyerNotFoundError,
+  type FlyerProductCardDTO,
+  type FlyerSummaryDTO,
+} from "../api";
 
 vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof import("../api")>("../api");
@@ -8,14 +13,16 @@ vi.mock("../api", async () => {
     ...actual,
     fetchFlyerList: vi.fn(),
     fetchFlyerBySlug: vi.fn(),
+    fetchFlyerProducts: vi.fn(),
   };
 });
 
-const { fetchFlyerBySlug, fetchFlyerList } = await import("../api");
-const { getFlyerArchive, getFlyerDetail } = await import("../api-flyers");
+const { fetchFlyerBySlug, fetchFlyerList, fetchFlyerProducts } = await import("../api");
+const { getFlyerArchive, getFlyerDetail, getFlyerProducts } = await import("../api-flyers");
 
 const mockedFetchFlyerList = vi.mocked(fetchFlyerList);
 const mockedFetchFlyerBySlug = vi.mocked(fetchFlyerBySlug);
+const mockedFetchFlyerProducts = vi.mocked(fetchFlyerProducts);
 
 function dto(overrides: Partial<FlyerSummaryDTO> = {}): FlyerSummaryDTO {
   return {
@@ -27,6 +34,29 @@ function dto(overrides: Partial<FlyerSummaryDTO> = {}): FlyerSummaryDTO {
     end_date: "2026-08-23",
     status: "STORED",
     product_count: 10,
+    ...overrides,
+  };
+}
+
+function productCard(overrides: Partial<FlyerProductCardDTO> = {}): FlyerProductCardDTO {
+  return {
+    id: "card-1",
+    card_index: 0,
+    page: 1,
+    brand: null,
+    name: "Guacamole",
+    description: null,
+    quantity: null,
+    price: 3.75,
+    reference_price: null,
+    unit_prices: [],
+    discount_percent: null,
+    lidl_plus: false,
+    currency: "EUR",
+    status: "partial",
+    parser_version: "0.1.0",
+    warnings: ["missing_brand"],
+    notes: [],
     ...overrides,
   };
 }
@@ -160,5 +190,84 @@ describe("getFlyerDetail", () => {
     mockedFetchFlyerBySlug.mockRejectedValue(new FlyerNotFoundError("missing"));
 
     await expect(getFlyerDetail("missing")).rejects.toThrow(FlyerNotFoundError);
+  });
+});
+
+describe("getFlyerProducts", () => {
+  it("fetches every page and preserves flyer-specific partial card fields", async () => {
+    const cards = Array.from({ length: 105 }, (_, index) =>
+      productCard({
+        id: `card-${index}`,
+        card_index: index,
+        status: index === 104 ? "failed" : "partial",
+      }),
+    );
+    mockedFetchFlyerProducts.mockImplementation(async (_slug, { page = 1 } = {}) => ({
+      items: cards.slice((page - 1) * 100, page * 100),
+      total: cards.length,
+      page,
+      page_size: 100,
+    }));
+
+    const products = await getFlyerProducts("flyer-1");
+
+    expect(mockedFetchFlyerProducts).toHaveBeenNthCalledWith(1, "flyer-1", {
+      page: 1,
+      page_size: 100,
+    });
+    expect(mockedFetchFlyerProducts).toHaveBeenNthCalledWith(2, "flyer-1", {
+      page: 2,
+      page_size: 100,
+    });
+    expect(products).toHaveLength(105);
+    expect(products[0]).toMatchObject({
+      id: "card-0",
+      name: "Guacamole",
+      brand: null,
+      price: 3.75,
+      status: "partial",
+      warnings: ["missing_brand"],
+    });
+    expect(products[104].status).toBe("failed");
+  });
+
+  it("returns an empty array for a flyer with no cards", async () => {
+    mockedFetchFlyerProducts.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 100,
+    });
+
+    await expect(getFlyerProducts("empty-flyer")).resolves.toEqual([]);
+    expect(mockedFetchFlyerProducts).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates API errors instead of returning an empty result", async () => {
+    mockedFetchFlyerProducts.mockRejectedValue(new FlyerApiError("API unavailable", 503));
+
+    await expect(getFlyerProducts("flyer-1")).rejects.toThrow(FlyerApiError);
+  });
+
+  it("rejects inconsistent pagination metadata", async () => {
+    mockedFetchFlyerProducts
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 100 }, (_, index) =>
+          productCard({ id: `card-${index}`, card_index: index }),
+        ),
+        total: 101,
+        page: 1,
+        page_size: 100,
+      })
+      .mockResolvedValueOnce({
+        items: [productCard({ id: "card-101", card_index: 100 })],
+        total: 102,
+        page: 2,
+        page_size: 100,
+      });
+
+    await expect(getFlyerProducts("flyer-1")).rejects.toThrow(
+      "inconsistent flyer products pagination",
+    );
   });
 });

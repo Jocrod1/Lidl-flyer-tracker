@@ -1,10 +1,13 @@
 import {
   fetchFlyerBySlug,
   fetchFlyerList,
+  fetchFlyerProducts,
+  FlyerApiError,
   type FlyerSummaryDTO,
 } from "./api";
 import { mapFlyerSummary } from "./mapper";
 import type { FlyerArchiveItem } from "./types";
+import type { FlyerProductCard } from "@/lib/products";
 
 export { FlyerApiError, FlyerNotFoundError, MissingApiBaseUrlError } from "./api";
 
@@ -93,4 +96,67 @@ export async function getFlyerArchive(
 export async function getFlyerDetail(slug: string): Promise<FlyerArchiveItem> {
   const dto = await fetchFlyerBySlug(slug);
   return mapFlyerSummary(dto);
+}
+
+const FLYER_PRODUCTS_PAGE_SIZE = 100;
+
+/** Loads and maps all product-card observations for one flyer. */
+export async function getFlyerProducts(slug: string): Promise<FlyerProductCard[]> {
+  const firstPage = await fetchFlyerProducts(slug, {
+    page: 1,
+    page_size: FLYER_PRODUCTS_PAGE_SIZE,
+  });
+  if (
+    firstPage.page !== 1 ||
+    firstPage.page_size !== FLYER_PRODUCTS_PAGE_SIZE
+  ) {
+    throw new FlyerApiError("Flyer API returned inconsistent flyer products pagination.");
+  }
+  const items = [...firstPage.items];
+  const pageCount = Math.ceil(firstPage.total / firstPage.page_size);
+
+  for (let page = 2; page <= pageCount; page += 1) {
+    const nextPage = await fetchFlyerProducts(slug, {
+      page,
+      page_size: firstPage.page_size,
+    });
+    if (
+      nextPage.page !== page ||
+      nextPage.page_size !== firstPage.page_size ||
+      nextPage.total !== firstPage.total
+    ) {
+      throw new FlyerApiError("Flyer API returned inconsistent flyer products pagination.");
+    }
+    items.push(...nextPage.items);
+  }
+
+  if (items.length !== firstPage.total) {
+    throw new FlyerApiError("Flyer API returned an incomplete flyer products result.");
+  }
+
+  return items.map((item) => ({
+    id: item.id,
+    cardIndex: item.card_index,
+    page: item.page,
+    brand: item.brand,
+    name: item.name,
+    description: item.description,
+    quantity: item.quantity,
+    price: item.price,
+    referencePrice: item.reference_price,
+    unitPrices: item.unit_prices.map((unitPrice) => ({
+      value: unitPrice.value,
+      unit: unitPrice.unit,
+      basis: unitPrice.basis,
+      perUnit: unitPrice.per_unit,
+      raw: unitPrice.raw,
+    })),
+    discountPercent: item.discount_percent,
+    lidlPlus: item.lidl_plus,
+    currency: item.currency,
+    status: item.status,
+    parserVersion: item.parser_version,
+    warnings: item.warnings,
+    notes: item.notes,
+  }));
 }
