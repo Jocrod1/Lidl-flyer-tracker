@@ -324,6 +324,48 @@ def list_product_cards(
     return [dict(row) for row in rows], total
 
 
+def list_product_observations(*, parser_version: str) -> list[dict]:
+    """Return all card observations for the selected parser version with flyer context.
+
+    Grouping and pagination happen after retrieval because product identity is
+    derived from structured card fields and must be resolved before paging.
+    """
+    with _cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                pc.id,
+                pc.card_index,
+                pc.page,
+                pc.brand,
+                pc.name,
+                pc.description,
+                pc.quantity,
+                pc.price,
+                pc.reference_price,
+                pc.unit_prices,
+                pc.discount_percent,
+                pc.lidl_plus,
+                pc.currency,
+                pc.status,
+                pc.parser_version,
+                pc.warnings,
+                pc.notes,
+                f.id AS flyer_id,
+                f.slug AS flyer_slug,
+                f.start_date AS flyer_start_date
+            FROM product_cards AS pc
+            JOIN flyers AS f ON f.id = pc.flyer_id
+            WHERE pc.parser_version = %(parser_version)s
+            ORDER BY f.id ASC, pc.card_index ASC, pc.id ASC
+            """,
+            {"parser_version": parser_version},
+        )
+        rows = cur.fetchall()
+
+    return [dict(row) for row in rows]
+
+
 def upsert_product_cards(flyer_id: int, cards: list[dict]) -> None:
     """Insert/update extracted cards for one flyer idempotently."""
     with _cursor() as cur:
