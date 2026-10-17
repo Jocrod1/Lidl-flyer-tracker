@@ -3,9 +3,10 @@
 Read-only FastAPI service exposing ingested flyer data (Postgres via
 `lidl_tracker.storage.database`) to the Next.js frontend in `apps/web`.
 
-This implements the flyer list/detail routes and the Phase 3 flyer-card API
-from `docs/backend-frontend-integration-plan.md`. Canonical product endpoints
-and image URLs are not part of this API.
+This implements the flyer list/detail routes, the Phase 3 flyer-card API, and
+the provisional derived listing at `GET /v1/products` from
+`docs/backend-frontend-integration-plan.md`. It does not expose canonical
+product identities or product image URLs.
 Render deployment settings are documented in
 `docs/render-deployment.md`. The current deployment is the `main` branch
 served by the `lidl-tracker-api` Render service.
@@ -46,6 +47,7 @@ GET /health
 GET /v1/flyers?year=&page=&page_size=
 GET /v1/flyers/{slug}
 GET /v1/flyers/{slug}/products?page=&page_size=
+GET /v1/products?page=&page_size=
 ```
 
 The flyer products endpoint returns a paginated `{items, total, page,
@@ -54,6 +56,18 @@ It retains `ok`, `partial`, and `failed` extraction statuses; card fields and
 nullable values are documented by the generated OpenAPI schema. Pagination
 defaults to 20 cards and accepts a maximum page size of 100. A known flyer
 with no cards returns an empty page; an unknown slug returns 404.
+
+The products endpoint returns a paginated `{items, total, page, page_size}`
+catalogue derived from card observations on the active parser version. It
+groups only observations with matching normalized brand/name, matching
+description when present, and an exact positive structured quantity; cards
+without enough identity data remain separate `observation_only` entries.
+Each result has an opaque provisional
+`derived_id`, not a canonical product ID or route slug, and retains the source
+card observations and extraction statuses. Product category and image URL
+are currently null. Last-seen is based only on valid ISO flyer start dates.
+Pagination defaults to 20 derived results and accepts a maximum page size of
+100; invalid parameters return 422. The endpoint does not add or alter schema.
 
 See `docs/backend-frontend-integration-plan.md` for the response contract and
 design rationale.

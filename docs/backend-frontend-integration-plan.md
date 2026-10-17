@@ -6,7 +6,9 @@ This document describes the current backend and frontend architecture and the mi
 
 - Introduce a small FastAPI service under `apps/api`.
 - Keep the Next.js app focused on presentation and server-side API consumption.
-- Initially derive products from `product_cards` grouped by normalized name and brand.
+- Derive a listing from card observations using conservative, non-canonical
+  identity evidence; retain cards that cannot be safely grouped as
+  observation-only entries (Phase 4.2).
 - Do not introduce a canonical `products` table or entity-resolution pipeline in the first integration.
 - Keep the frontend mock accessors as a migration fallback while replacing their implementations feature by feature.
 
@@ -333,33 +335,52 @@ The API should return frontend-oriented fields rather than exposing raw database
 
 ### V1: derive products from cards
 
-For the first integration, derive a product group from:
+For the initial derived listing, group an observation only when all of these
+fields are available:
 
 ```text
-brand + normalized_name
+normalized brand + conservatively normalized name + exact structured quantity
 ```
 
-The API can read `payload->>'normalized_name'` and fall back to normalizing `name` when the payload does not contain it.
+When a description is present, its conservatively normalized text is also
+required to match; missing descriptions only match other missing descriptions.
 
-The derived product contains:
+Normalization is Unicode compatibility normalization, case folding, accent
+removal, and whitespace collapsing; punctuation and digits are preserved.
+Quantity must have a positive numeric value and unit, no alternative values,
+and must not be approximate. Pack count is part of the identity. A missing
+brand, name, or sufficiently precise quantity is not enough evidence to merge
+observations across flyers; those cards remain separate observation-only
+entries. The parser's `normalized_name` is useful for search, but its broader
+punctuation folding is not used as the sole identity key.
 
-- A deterministic ID derived from the grouping key.
-- A deterministic slug generated from brand and normalized name.
-- The latest card price.
-- The latest flyer date as `lastSeen`.
-- The earliest flyer date as `firstSeen`.
-- All matching cards as appearances.
-- The card prices as price history.
-- The highest meaningful reference price.
+The listing's derived group key is an opaque deterministic digest of the
+grouping evidence, not a canonical product ID or a routable slug. Observation
+only keys are derived from the source flyer/card occurrence and are likewise
+not canonical. Both may change when source data or grouping rules change.
 
-This avoids an immediate schema change and supports the current Product Detail UI. It has known limitations:
+The paginated response includes nullable brand, name, description, structured
+quantity, latest observed price, and `last_seen`; category and image URL are
+explicitly null. `last_seen` is the maximum strictly valid ISO flyer `start_date` among
+the group's observations, not an ingestion timestamp. Every source card is
+retained in an `observations` array with its original extraction fields,
+status, warnings, and flyer context. Observations are ordered newest flyer
+date first, then by stable flyer/card identifiers. The group summary price is
+from the newest observation and remains null if that observation has no price.
 
-- Product name variants may split one real-world product into multiple groups.
-- Quantity or package changes may create separate groups.
-- Slugs can change if the grouping inputs change.
+This avoids an immediate schema change and supports a derived listing without
+claiming canonical identity. It has known limitations:
+
+- Strict exact matching intentionally splits spelling/punctuation changes and
+  quantity or package changes rather than risk merging distinct variants.
+- Identical brand, name, and quantity can still describe different products;
+  these remain provisional derived groups rather than canonical identity.
+- Observation-only records are not cross-flyer deduplicated.
 - Category cannot be reliably populated from current data.
 
-The API contract must document that derived product slugs are provisional until canonical products are introduced.
+Do not generate product slugs from these derived groups or use their digest as
+a `/products/{slug}` link. A canonical entity-resolution process and product
+detail resource are separate future work.
 
 ### Future canonical model
 
@@ -715,6 +736,28 @@ through `DATABASE_URL`, but this workspace has no Render service binding or
 Render API credentials with which to verify that its live Neon branch matches
 the audited database.
 
+#### Verification status
+
+Keep implementation, local validation, and live production evidence distinct:
+
+| Status | Result |
+| --- | --- |
+| Implemented | `GET /v1/flyers/{slug}/products` and the server-rendered flyer detail integration are present on `main`. |
+| Locally validated | Frontend validation was reported passing before this production check. API router tests use a mocked database and do not validate production records. |
+| Production verified (2026-10-15) | GitHub's Production deployment completed successfully for `b0b3ad9`; it includes API change `766ee3a` and frontend change `4d70eff`. The live Vercel archive and flyer detail pages rendered successfully. The Alimentación flyer `folletos-folleto-alimentacion-12-10-2026-10-05-335e1f03` rendered all 225 of its 225 tracked cards, including two `partial` cards. The frontend requests pages of 100, so this confirms the UI completed all three API pages without its product-load error state. |
+| Production verification pending | A direct request to the Render API origin, raw JSON checks for nullable fields, and direct unknown-slug API 404 verification could not be completed because the canonical Render public URL is not recorded in the repository. The guessed `https://lidl-tracker-api.onrender.com` returned 404 for both `/health` and `/openapi.json`; this does not establish whether that is the live service URL. The selected live flyer pages had no visible missing-name or missing-price cards, which is not a substitute for inspecting nullable API fields. Render and Vercel runtime logs were not available from this workspace. |
+
+Production checklist:
+
+- [x] Confirm the Phase 3 API and frontend commits are included in the successful production deployment.
+- [x] Load the production Vercel archive and a known flyer detail page.
+- [x] Confirm pagination beyond one 100-card page and preservation of partial extraction statuses through the production UI.
+- [ ] Obtain the canonical public origin from the Render `lidl-tracker-api` service settings and verify `GET /health` and `GET /v1/flyers/{slug}/products` directly.
+- [ ] Inspect direct API JSON for nullable fields and verify all pages' `page`, `page_size`, and `total` values; confirm a nonexistent slug returns HTTP 404.
+- [ ] Review the corresponding Render service and Vercel production function/runtime logs for integration errors.
+
+For the remaining checks, use the known slug above and request `page_size=100` with `page=1`, `2`, and `3`; confirm the combined item count equals `total` and inspect the two partial cards and nullable values in the JSON. Then request the same route with a nonexistent slug and confirm HTTP 404. Compare the Vercel production `LIDL_API_BASE_URL` setting with the canonical Render origin in the dashboards without copying or logging any secret values. No production database records or schema were changed during this verification.
+
 #### Implemented endpoint
 
 ```text
@@ -973,7 +1016,8 @@ exists. Deriving Product Explorer groups remains Phase 4.
 
 - Add `GET /v1/products`.
 - Add `GET /v1/products/{slug}`.
-- Group cards by brand and normalized name.
+- Group only cards with matching brand/name, matching description when
+  present, and exact structured quantity; keep uncertain cards separate.
 - Return appearances and price history in the frontend's expected order.
 
 **Frontend changes**
@@ -994,6 +1038,187 @@ exists. Deriving Product Explorer groups remains Phase 4.
 
 - Product name variants can split one real-world product into separate derived products.
 - Derived slugs are provisional until canonical products exist.
+
+### Phase 4.1 — Integrate the Product Listing
+
+**Audit result (2026-10-15): blocked by the current API contract**
+
+The checked-in FastAPI application registers only the health and flyer
+routers. There is no `GET /v1/products` route, response model, or list query.
+The product listing at `/` still calls the synchronous mock accessors in
+`src/lib/products/mock-products.ts`; its API data-access seam is not yet
+implemented.
+
+The available product-related API contract is limited to:
+
+| Endpoint | Pagination and filters | Returned product data |
+| --- | --- | --- |
+| `GET /v1/flyers` | `page` (default 1), `page_size` (default 20, max 100), optional `year` | Flyer summaries, including flyer `category`, dates, slug, and product-card count |
+| `GET /v1/flyers/{slug}/products` | `page` (default 1), `page_size` (default 20, max 100); no filters | Flyer-specific extracted card observations |
+
+The flyer-card response contains `id`, `card_index`, nullable `page`,
+`brand`, `name`, `description`, `quantity`, `price`, `reference_price`,
+`discount_percent`, parser status and metadata, and unit prices. `quantity`
+contains the raw printed quantity when present. The response does **not**
+contain a product slug/identity, a product category, a last-seen date, or an
+image URL. `category` belongs to the flyer summary, not to an individual card;
+persisted image object keys are not public image URLs and are not returned.
+Both names and prices can be null.
+
+These results are extracted flyer-card observations, not canonical products.
+Card IDs identify observations within flyers; the database has no canonical
+product table or card-to-product relationship. Combining every flyer and its
+cards in the frontend would duplicate repeated offers and would not create
+valid product identities or detail links. The mock `Product` requires a
+product slug, category, price, and last-seen value, so its shape cannot be
+filled honestly from the current API contract.
+
+**Status**
+
+| Status | Result |
+| --- | --- |
+| Implemented | Not implemented: `/` still uses mock products; no product-list API or frontend adapter exists. |
+| Locally validated | The route registrations, response schemas, flyer-card client validator, product types, mock accessor, and listing components were inspected. Existing frontend tests pass (40/40), lint passes, `tsc --noEmit` passes, and the production build passes with webpack. The default Turbopack build hits Lightning CSS native-module resolution in this workspace; no listing-specific tests were added because the required API contract does not exist. |
+| Production-verified | Not verified. No deployed `/v1/products` contract or production listing was tested for this milestone. |
+| Pending | Phase 4.2 now supplies the backend contract; deployment verification and frontend listing integration remain separate pending work. |
+
+**Smallest recommended backend change**
+
+Phase 4.2 implements the paginated API and its conservative, explicitly
+non-canonical grouping contract. The frontend remains on mocks until the API
+is deployed and the listing is separately integrated. Category filters and
+category counts remain unavailable until a real product category source is
+defined. Product-detail/history integration and image delivery remain out of
+scope for Phase 4.1.
+
+After the endpoint is deployed and its contract is verified, integrate the
+route through the existing server-side API-client and runtime-validation
+pattern, page through all list results consistently, and render the existing
+responsive grid with honest empty and API-error states. Do not infer global
+products by fanning out over flyer endpoints, fabricate slugs from names,
+treat flyer categories as product categories, or expose stored image keys as
+URLs.
+
+### Phase 4.2 — Derived Products API
+
+**Status (2026-10-15)**
+
+| Status | Result |
+| --- | --- |
+| Implemented | Read-only `GET /v1/products` derives provisional groups from the active parser version and retains the source card observations. No migration or frontend listing change. |
+| Locally validated | Four checked-in extracted flyer-card payloads contain 635 observations: 635 have names, 504 have brands, 372 have precise structured quantities, and the conservative rule identifies 333 observations in 325 groups (8 repeated groups). All API tests pass (27); database/parser tests pass (38) with 12 PostgreSQL integration tests skipped because no test server is reachable. Python compile checks and CRLF-aware `git diff --check` pass. |
+| Production-verified | The Phase 4.3 audit confirmed the required columns and sampled real Neon observations read-only. The deployed `/v1/products` HTTP contract was not verified; see Phase 4.3. |
+| Pending | Phase 4.3 remains blocked until this implementation is deployed to Render and the direct API contract is tested. Frontend listing integration remains a separate milestone. |
+
+**Contract**
+
+```text
+GET /v1/products?page=1&page_size=20
+```
+
+Returns `{items, total, page, page_size}`. `page` is one-based and defaults
+to 1; `page_size` defaults to 20 and accepts 1–100. Pagination applies to
+the derived groups after identity grouping, with deterministic ordering:
+valid `last_seen` descending, normalized name and brand ascending, then the
+opaque derived key. Empty and past-end pages return an empty `items` array
+with the total group count. Invalid pagination uses FastAPI's 422 response.
+There are no filters because the current observations do not support
+trustworthy product categories or canonical product attributes.
+
+Each item has `derived_id` (opaque, provisional, not a canonical ID or slug),
+`identity` (`matched` or `observation_only`), nullable `brand`, `name`,
+`description`, `quantity`, `price`, and `last_seen`, the observed `currency`,
+nullable `category` and `image_url`, `observation_count`, and `observations`.
+Each observation retains the flyer-card response fields and extraction status
+plus nullable flyer slug and the stored flyer start-date string. The summary fields come from the newest
+dated observation (stable flyer/card ID tie-break); `last_seen` is the latest
+strict ISO date among observations, and is null if none is valid. The price
+is nullable and is not backfilled from an older observation if the newest
+observation lacks a price.
+
+**Identity and limitations**
+
+The parser's `normalize_name()` intentionally removes punctuation and is
+appropriate for search, but too lossy as the sole identity rule. The API
+instead uses Unicode compatibility normalization, case folding, accent
+removal, and whitespace collapsing while preserving punctuation and digits.
+Only observations with non-empty brand and name plus an exact structured,
+positive, non-approximate quantity (value and unit, no alternatives; pack
+count included) are grouped across flyers. A present description must also
+match exactly after conservative normalization; null/blank descriptions only
+match each other. Cards missing any required identity fields remain separate
+observation-only entries. This conservative rule avoids merging known size
+variants but can still conflate distinct SKUs with the same brand, name,
+description, and quantity, and it intentionally splits formatting variants.
+Derived IDs are not permanent and must not be used as product links. Category
+and image URL remain null because no reliable API source exists. `last_seen`
+uses flyer start dates, never database timestamps.
+
+The endpoint reads observations for the API's active parser version, groups
+them before pagination, and does not mutate data or add schema. The inspected
+sample indicates exact matched groups are a minority; the remaining cards
+must be represented as observation-only rather than silently discarded or
+merged. It currently loads those observations into application memory to
+group them; if catalogue volume grows materially, profile it and consider a
+database-side grouping query or explicit entity mapping before adding indexes
+or schema.
+
+### Phase 4.3 — Production verification of `GET /v1/products`
+
+**Status (2026-10-15): BLOCKED — deployed API verification could not be completed**
+
+| Check | Evidence and result |
+| --- | --- |
+| Local implementation and contract | The current worktree contains the Phase 4.2 route, typed envelope, grouping-before-pagination logic, validation, and mocked failure coverage. `apps/api/tests` passes (28); the database/parser selection passes (38, with 12 PostgreSQL tests skipped); `compileall` passes. |
+| Render deployment | The documented Render service tracks `main`, but the current endpoint changes are uncommitted/untracked and are absent from both `HEAD` and `origin/main` (`b0b3ad9`). The latest successful GitHub Production deployment record is a Vercel deployment at that same source commit, not evidence of a Render API deployment. The implementation therefore cannot be considered deployed by the documented Render/main pipeline. |
+| API origin and health | The repository, audit configuration, and available GitHub deployment metadata do not provide the canonical Render API origin or a Render service binding. No direct `/health` or `/v1/products` request was made against a guessed host. API health, response envelope, pagination boundaries, repeated ordering, cross-page duplicates, 422 responses, and HTTP database-failure behavior remain unverified in production. |
+| Audit database configuration | A local ignored audit configuration contains a Neon `DATABASE_URL`; its value was not displayed or added to this document. The Render service's own configured variable and Neon branch cannot be compared from this workspace. |
+| Production database schema | A connection to the audit Neon database was forced read-only. The API query's expected `flyers` and `product_cards` columns are present. PostgreSQL reports 9 flyers, 1,409 cards, and 1,409 cards on active parser `0.1.0`; all active observations have flyer slug and start-date context. This confirms compatibility with the audited database, but does not independently prove that Render is bound to this exact database/branch. |
+| Representative data sample | At most 35 observations per flyer were read: 315 observations from all 9 flyers, covering 4 Alimentación, 4 Bazar, and 1 Especial flyer title. The stored `flyers.category` is only the generic value `Folletos`, not a product category. The existing local derivation produced 312 groups (55 matched, 257 observation-only); 3 matched groups each had two supporting observations from two flyers. All 315 source IDs were unique and retained, all 312 group summaries matched their newest observation, source statuses (`ok`, `partial`) were preserved, and all 312 `last_seen` values were valid ISO dates. Category and image URL were null throughout, as specified. |
+| Identity/data-quality sample | The sampled observations had 128 missing brands and 136 missing structured quantities; these appropriately remained observation-only. Within the sample, two same-normalized-brand/name sets remained separate: one quantity-value difference and one description difference. No unit or pack-count variation, or second currency, occurred in this sample, so those distinctions were not independently demonstrated against production variants. No grouping-rule change was made. |
+| Suspicious records | None were identified in the bounded sample beyond the expected incomplete identity fields. All sampled source IDs were unique, statuses were retained, and all active database rows had flyer context. This is not a full-catalogue anomaly review. |
+| Empty set and outage | An empty production catalogue was not manufactured or queried; empty/past-end behavior is covered by mocked API tests. Database failure is tested with a mock and returns generic HTTP 500 text without the injected internal detail. No production failure was induced. |
+
+**Commands used (no credential or response payload printed):**
+
+```bash
+git rev-parse HEAD origin/main
+gh api repos/Jocrod1/Lidl-flyer-tracker/deployments?per_page=20 --jq '.[] | [.id, .environment, .ref, .created_at] | @tsv'
+gh api repos/Jocrod1/Lidl-flyer-tracker/deployments/7090565005/statuses --jq '.[0] | {state, environment_url, target_url, created_at, description}'
+gh api repos/Jocrod1/Lidl-flyer-tracker/actions/secrets --jq '.secrets[].name'
+PYTHONPATH=apps/api/src:ingestion/src:.venv/Lib/python3.12/site-packages:.venv/Lib/site-packages python3 tools/verify_products_production.py --env-file .env.audit
+PYTHONPATH=apps/api/src:ingestion/src:.venv/Lib/python3.12/site-packages:.venv/Lib/site-packages python3 -m pytest apps/api/tests
+PYTHONPATH=apps/api/src:ingestion/src:.venv/Lib/python3.12/site-packages:.venv/Lib/site-packages python3 -m pytest ingestion/tests/test_database.py ingestion/tests/test_parsers.py
+PYTHONPATH=apps/api/src:ingestion/src:.venv/Lib/python3.12/site-packages:.venv/Lib/site-packages python3 -m compileall -q apps/api/src/api apps/api/tests/test_products.py ingestion/src/lidl_tracker/storage/database.py tools/verify_products_production.py
+git -c core.whitespace=cr-at-eol diff --check
+```
+
+No Python lint, static type-check, or API build command is configured in the
+API/ingestion project manifests; Python compilation was used as the available
+syntax/build check. The production audit utility accepts an env file only to
+obtain `DATABASE_URL`, forces PostgreSQL `default_transaction_read_only=on`,
+samples no more than 35 cards per flyer, and never prints the connection URL
+or product names.
+
+**Required safe follow-up before declaring this phase complete:**
+
+1. In Render's `lidl-tracker-api` service settings, obtain the canonical public
+   origin and confirm `DATABASE_URL` is configured. Compare the service's
+   database/branch to the audited Neon target without copying the secret into
+   logs, chat, or the repository.
+2. Commit/merge and push the Phase 4.2 implementation through the authorized
+   deployment path; wait for Render to deploy the commit containing
+   `/v1/products`. No migration is required for this read-only endpoint.
+3. Against the confirmed origin, check `/health`, then request default and
+   `page_size=3` pages 1 and 2. Repeat page 1 to compare stable ordering,
+   compare `derived_id` values across adjacent pages, and inspect a few
+   observations for status, nullable fields, ISO dates, and grouping support.
+   Check `page=0` and `page_size=101` for 422. Do not disable the production
+   database to test outage behavior; the mocked regression test covers it.
+   Only test an empty result if a naturally empty safe filter/test database
+   becomes available.
+
+Until those steps are complete, Phase 4.3 is **BLOCKED**, not production-ready.
 
 ### Phase 5 — Images and assets
 

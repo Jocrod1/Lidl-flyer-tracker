@@ -115,3 +115,57 @@ class FlyerProductsResponse(Page[ProductCardResponse]):
     """One paginated page of a flyer's cards from the active parser version."""
 
     pass
+
+
+class ProductObservationResponse(ProductCardResponse):
+    """One original flyer-card observation retained in a derived product."""
+
+    flyer_slug: Optional[str] = Field(
+        description="Persisted source flyer slug, if available."
+    )
+    flyer_start_date: Optional[str] = Field(
+        description="Stored flyer start-date string; may not be a valid ISO date."
+    )
+
+
+class DerivedProductResponse(BaseModel):
+    """A provisional grouping of flyer-card observations, not a canonical product."""
+
+    derived_id: str = Field(
+        description="Opaque provisional identifier; not a canonical ID or route slug."
+    )
+    identity: Literal["matched", "observation_only"] = Field(
+        description=(
+            "Whether observations met the conservative cross-flyer identity rule "
+            "or remain an ungrouped source observation."
+        )
+    )
+    brand: Optional[str] = Field(description="Brand from the newest observation.")
+    name: Optional[str] = Field(description="Name from the newest observation.")
+    description: Optional[str] = Field(
+        description="Description from the newest observation."
+    )
+    quantity: Optional[QuantityResponse] = Field(
+        description="Structured quantity from the newest observation."
+    )
+    price: Optional[float] = Field(
+        description="Price from the newest observation, if available."
+    )
+    currency: str = Field(description="Currency from the newest observation.")
+    last_seen: Optional[str] = Field(
+        description="Latest valid ISO flyer start date across these observations."
+    )
+    category: Optional[str] = Field(
+        default=None, description="Unavailable until a reliable product source exists."
+    )
+    image_url: Optional[str] = Field(
+        default=None, description="Unavailable until public image delivery exists."
+    )
+    observation_count: int = Field(ge=1)
+    observations: List[ProductObservationResponse]
+
+
+class ProductsResponse(Page[DerivedProductResponse]):
+    """One page of provisional derived product groups."""
+
+    pass

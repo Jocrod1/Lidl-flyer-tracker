@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from .routers import flyers, health
+from .routers import flyers, health, products
 
 app = FastAPI(
     title="Lidl Tracker API",
@@ -23,3 +23,4 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(flyers.router)
+app.include_router(products.router)

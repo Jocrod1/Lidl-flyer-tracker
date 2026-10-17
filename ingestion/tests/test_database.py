@@ -167,6 +167,28 @@ class TestListFlyers:
         assert len(page2) == 1
 
 
+class TestListProductObservations:
+    def test_returns_current_parser_cards_with_their_flyer_context(self):
+        first_flyer = _insert_flyer(slug="first-flyer", start_date="2026-08-10")
+        second_flyer = _insert_flyer(slug="second-flyer", start_date="2026-08-17")
+        first_card = _card("first")
+        second_card = _card("second")
+        second_card["status"] = "partial"
+        second_card["warnings"] = ["missing_brand"]
+        second_card["parser_version"] = "0.2.0"
+        db.upsert_product_cards(first_flyer.id, [first_card])
+        db.upsert_product_cards(second_flyer.id, [second_card])
+
+        observations = db.list_product_observations(parser_version="0.1.0")
+
+        assert len(observations) == 1
+        assert observations[0]["flyer_id"] == first_flyer.id
+        assert observations[0]["flyer_slug"] == "first-flyer"
+        assert observations[0]["flyer_start_date"] == "2026-08-10"
+        assert observations[0]["name"] == first_card["name"]
+        assert observations[0]["status"] == "ok"
+
+
 class TestGetFlyerBySlug:
     def test_found_returns_record_and_product_count(self):
         record = _insert_flyer(slug="a-flyer")
